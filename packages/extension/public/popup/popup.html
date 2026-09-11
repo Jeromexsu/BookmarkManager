@@ -3,47 +3,408 @@
   <head>
     <meta charset="utf-8" />
     <style>
-      body { width: 280px; font-family: sans-serif; padding: 12px; }
-      button { padding: 8px; cursor: pointer; }
-      button.primary { width: 100%; }
-      input { width: 100%; padding: 6px; box-sizing: border-box; margin-top: 2px; }
-      label { font-size: 12px; color: #444; display: block; margin-top: 8px; }
-      #reviewTitle { font-weight: 600; margin: 0 0 4px; word-break: break-word; }
-      #reviewWarning { color: #a60; font-size: 12px; margin: 4px 0; }
-      #summary { font-size: 12px; color: #555; margin: 8px 0; }
-      .row { display: flex; gap: 8px; margin-top: 12px; }
-      .row button { flex: 1; }
-      #status, #doneMessage { font-size: 12px; color: #555; min-height: 1.2em; }
-      #options { font-size: 12px; }
+      :root {
+        --accent: #3b6fed;
+        --accent-hover: #2f5cd6;
+        --accent-tint: #eaf0fe;
+        --accent-tint-text: #2f56c4;
+        --border: #e8e8ec;
+        --text: #17171a;
+        --muted: #8a8a94;
+        --bg: #ffffff;
+        --bg-subtle: #f6f6f8;
+        --error: #e0393e;
+        --success: #1f9d55;
+        --radius: 10px;
+        --shadow: 0 1px 2px rgba(20, 20, 30, 0.04);
+        --shadow-focus: 0 0 0 3px rgba(59, 111, 237, 0.15);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --accent: #5b8bff;
+          --accent-hover: #6f98ff;
+          --accent-tint: #1c2740;
+          --accent-tint-text: #a9c0ff;
+          --border: #2c2c33;
+          --text: #f0f0f2;
+          --muted: #8f8f99;
+          --bg: #1b1b1f;
+          --bg-subtle: #26262b;
+          --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+          --shadow-focus: 0 0 0 3px rgba(91, 139, 255, 0.25);
+        }
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        width: 350px;
+        margin: 0;
+        padding: 16px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 13px;
+        color: var(--text);
+        background: var(--bg);
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 14px;
+      }
+
+      header h1 {
+        font-size: 14.5px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        margin: 0;
+      }
+
+      #options {
+        font-size: 11.5px;
+        color: var(--muted);
+        text-decoration: none;
+        transition: color 0.15s ease;
+      }
+      #options:hover { color: var(--accent); }
+
+      .tabs {
+        display: flex;
+        gap: 3px;
+        background: var(--bg-subtle);
+        border-radius: var(--radius);
+        padding: 3px;
+        margin-bottom: 14px;
+      }
+      .tab {
+        flex: 1;
+        border: none;
+        background: transparent;
+        padding: 6px;
+        border-radius: calc(var(--radius) - 4px);
+        font: inherit;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--muted);
+        cursor: pointer;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+      .tab.active { background: var(--bg); color: var(--text); box-shadow: var(--shadow); }
+
+      .field { margin-bottom: 12px; }
+
+      .field label {
+        display: block;
+        font-size: 10.5px;
+        font-weight: 700;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 4px;
+      }
+
+      input, textarea {
+        width: 100%;
+        padding: 7px 10px;
+        border: 1px solid transparent;
+        border-radius: var(--radius);
+        font: inherit;
+        color: var(--text);
+        background: var(--bg-subtle);
+        box-shadow: var(--shadow);
+        resize: none;
+        transition: box-shadow 0.15s ease, border-color 0.15s ease;
+      }
+
+      input::placeholder, textarea::placeholder { color: var(--muted); }
+
+      input:focus, textarea:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: var(--shadow-focus);
+        background: var(--bg);
+      }
+
+      input:disabled, textarea:disabled { opacity: 0.55; }
+
+      #url { font-size: 11px; color: var(--muted); }
+      #content { height: 62px; overflow-y: auto; font-size: 12px; }
+      #summary { min-height: 34px; overflow: hidden; }
+
+      .field-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 4px;
+      }
+      .field-header label { margin-bottom: 0; }
+
+      .link-btn {
+        all: unset;
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--accent);
+        padding: 2px 3px;
+      }
+      .link-btn:hover { color: var(--accent-hover); }
+      .link-btn:disabled { opacity: 0.5; cursor: default; }
+
+      .hint {
+        text-transform: none;
+        font-weight: 500;
+        letter-spacing: 0;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .title-row { display: flex; align-items: center; gap: 8px; }
+      #favicon {
+        width: 18px;
+        height: 18px;
+        flex: none;
+        border-radius: 4px;
+        display: none;
+      }
+      #favicon.visible { display: block; }
+
+      .field-row { display: flex; gap: 8px; margin-bottom: 12px; }
+      .field-row .field { flex: 1; margin-bottom: 0; }
+
+      .tags-input {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 5px;
+        padding: 5px 7px;
+        border: 1px solid transparent;
+        border-radius: var(--radius);
+        background: var(--bg-subtle);
+        box-shadow: var(--shadow);
+        transition: box-shadow 0.15s ease, border-color 0.15s ease;
+      }
+      .tags-input:focus-within {
+        border-color: var(--accent);
+        box-shadow: var(--shadow-focus);
+        background: var(--bg);
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: var(--accent-tint);
+        color: var(--accent-tint-text);
+        padding: 3px 4px 3px 9px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .pill button {
+        all: unset;
+        cursor: pointer;
+        line-height: 1;
+        font-size: 13px;
+        padding: 2px 5px;
+        border-radius: 999px;
+        opacity: 0.65;
+      }
+      .pill button:hover { opacity: 1; background: rgba(0, 0, 0, 0.08); }
+
+      #tagInput {
+        flex: 1 1 60px;
+        min-width: 60px;
+        border: none;
+        box-shadow: none;
+        background: transparent;
+        padding: 3px 4px;
+      }
+      #tagInput:focus { box-shadow: none; }
+
+      .combobox { position: relative; }
+      .combobox-menu {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        right: 0;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: 0 6px 16px rgba(20, 20, 30, 0.12);
+        max-height: 140px;
+        overflow-y: auto;
+        z-index: 10;
+      }
+      .combobox-item {
+        padding: 6px 10px;
+        font-size: 12.5px;
+        cursor: pointer;
+      }
+      .combobox-item:hover { background: var(--bg-subtle); }
+      .combobox-item.create { color: var(--accent); font-weight: 600; }
+
+      .actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      button.action {
+        flex: 1;
+        padding: 9px 10px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.1s ease, box-shadow 0.15s ease, background 0.15s ease;
+      }
+      button.action:hover:not(:disabled) {
+        box-shadow: var(--shadow);
+        transform: translateY(-1px);
+      }
+      button.action:disabled { cursor: default; opacity: 0.55; transform: none; }
+
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: white;
+      }
+      button.primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+      #bookmarkList { max-height: 400px; overflow-y: auto; margin-top: 10px; }
+
+      .bm-item {
+        display: flex;
+        gap: 8px;
+        padding: 9px 4px;
+        border-bottom: 1px solid var(--border);
+        cursor: pointer;
+      }
+      .bm-item:last-child { border-bottom: none; }
+      .bm-item:hover { background: var(--bg-subtle); }
+
+      .bm-favicon { width: 16px; height: 16px; border-radius: 3px; flex: none; margin-top: 2px; }
+
+      .bm-body { min-width: 0; flex: 1; }
+      .bm-title {
+        font-size: 12.5px;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .bm-url {
+        font-size: 10.5px;
+        color: var(--muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .bm-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+      .bm-chip {
+        font-size: 10px;
+        font-weight: 600;
+        background: var(--bg-subtle);
+        color: var(--muted);
+        padding: 2px 7px;
+        border-radius: 999px;
+      }
+      .bm-chip.tag { background: var(--accent-tint); color: var(--accent-tint-text); }
+
+      #browseEmpty { text-align: center; color: var(--muted); font-size: 12px; padding: 24px 0; }
+
+      #status {
+        min-height: 14px;
+        font-size: 11.5px;
+        margin: 10px 0 0;
+        transition: color 0.15s ease;
+      }
+      #status.error { color: var(--error); }
+      #status.success { color: var(--success); }
+      #status.info { color: var(--muted); }
     </style>
   </head>
   <body>
-    <div id="initial">
-      <button id="save" class="primary">Save this page</button>
+    <header>
+      <h1>🔖 Bookmark Manager</h1>
+      <a href="#" id="options">Settings</a>
+    </header>
+
+    <div class="tabs">
+      <button id="tabSave" type="button" class="tab active">Save</button>
+      <button id="tabBrowse" type="button" class="tab">Browse</button>
     </div>
 
-    <div id="loading" hidden>
-      <p>Extracting page &amp; generating tags…</p>
-    </div>
-
-    <div id="review" hidden>
-      <p id="reviewTitle"></p>
-      <p id="reviewWarning"></p>
-      <label>Category<input id="category" /></label>
-      <label>Tags (comma-separated)<input id="tags" /></label>
-      <p id="summary"></p>
-      <div class="row">
-        <button id="confirmSave">Save</button>
-        <button id="cancel" type="button">Cancel</button>
+    <div id="saveView">
+    <div class="field">
+      <label for="title">Title</label>
+      <div class="title-row">
+        <img id="favicon" alt="" />
+        <input id="title" type="text" />
       </div>
     </div>
 
-    <div id="done" hidden>
-      <p id="doneMessage"></p>
+    <div class="field">
+      <div class="field-header">
+        <label for="tagInput">Tags</label>
+        <button id="autoTag" type="button" class="link-btn">✨ Auto-tag</button>
+      </div>
+      <div id="tagsContainer" class="tags-input">
+        <input id="tagInput" type="text" placeholder="Add a tag…" />
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="url">URL</label>
+      <input id="url" type="text" />
+    </div>
+
+    <div class="field">
+      <label for="summary">Summary</label>
+      <textarea id="summary" placeholder="—" rows="1"></textarea>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="categoryInput">Category</label>
+        <div class="combobox" id="categoryCombobox">
+          <input id="categoryInput" type="text" placeholder="e.g. coding" autocomplete="off" />
+          <div class="combobox-menu" id="categoryMenu" hidden></div>
+        </div>
+      </div>
+      <div class="field">
+        <label for="projectInput">Project <span class="hint">(optional)</span></label>
+        <div class="combobox" id="projectCombobox">
+          <input id="projectInput" type="text" placeholder="No project" autocomplete="off" />
+          <div class="combobox-menu" id="projectMenu" hidden></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="content">Page content</label>
+      <textarea id="content"></textarea>
+    </div>
+
+    <div class="actions">
+      <button id="save" class="action primary">Save</button>
+    </div>
+    </div>
+
+    <div id="browseView" hidden>
+      <input id="searchInput" type="text" placeholder="Search bookmarks…" />
+      <div id="bookmarkList"></div>
+      <p id="browseEmpty" hidden>No bookmarks yet.</p>
     </div>
 
     <p id="status"></p>
-    <a href="#" id="options">Options</a>
+
     <script type="module" src="popup.js"></script>
   </body>
 </html>
