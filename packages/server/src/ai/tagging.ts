@@ -26,7 +26,7 @@ export async function generateTags(content: string): Promise<TaggingResult> {
   const truncated = content.slice(0, MAX_CONTENT_CHARS);
 
   const response = await getClient().chat.completions.create({
-    model: "deepseek-chat",
+    model: "deepseek-flash",
     response_format: { type: "json_object" },
     messages: [
       {
@@ -38,6 +38,7 @@ export async function generateTags(content: string): Promise<TaggingResult> {
       },
       { role: "user", content: truncated },
     ],
+    stream: false,
   });
 
   const raw = response.choices[0]?.message?.content;
