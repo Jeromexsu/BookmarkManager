@@ -53,6 +53,9 @@ export const bookmarks = pgTable("bookmarks", {
   categoryId: integer("category_id").references(() => categories.id, { onDelete: "set null" }),
   projectId: integer("project_id").references(() => projects.id, { onDelete: "set null" }),
   status: text("status").notNull().default("pending"),
+  // "reference" (has real content worth reading/tagging) vs "shortcut" (a pure entrance/portal
+  // page like a homepage — no content, just a launcher). See ai/classify.ts.
+  type: text("type").notNull().default("reference"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

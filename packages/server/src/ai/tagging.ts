@@ -15,7 +15,7 @@ const taggingResultSchema = z.object({
 export type TaggingResult = z.infer<typeof taggingResultSchema>;
 
 let client: OpenAI | null = null;
-function getClient(): OpenAI {
+export function getClient(): OpenAI {
   if (!client) {
     const apiKey = process.env.DEEPSEEK_API_KEY;
     if (!apiKey) {

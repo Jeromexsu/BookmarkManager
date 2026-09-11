@@ -3,6 +3,11 @@ import { z } from "zod";
 export const bookmarkStatusSchema = z.enum(["pending", "tagged", "failed"]);
 export type BookmarkStatus = z.infer<typeof bookmarkStatusSchema>;
 
+// "reference" has real content worth reading/tagging; "shortcut" is a pure entrance/portal
+// page (a homepage, a tool's landing page) that's just a launcher, with nothing to summarize.
+export const bookmarkTypeSchema = z.enum(["reference", "shortcut"]);
+export type BookmarkType = z.infer<typeof bookmarkTypeSchema>;
+
 export const bookmarkSchema = z.object({
   id: z.number(),
   url: z.string().url(),
@@ -16,6 +21,7 @@ export const bookmarkSchema = z.object({
   category: z.string().nullable(),
   project: z.string().nullable(),
   status: bookmarkStatusSchema,
+  type: bookmarkTypeSchema,
   tags: z.array(z.string()),
   createdAt: z.string(),
 });
@@ -48,6 +54,8 @@ export const updateBookmarkRequestSchema = z.object({
   category: z.string().optional(),
   project: z.string().optional(),
   tags: z.array(z.string()).optional(),
+  // Manual override/undo for the bulk detect-shortcuts flow below.
+  type: bookmarkTypeSchema.optional(),
 });
 export type UpdateBookmarkRequest = z.infer<typeof updateBookmarkRequestSchema>;
 
@@ -106,3 +114,24 @@ export const importJobSchema = z.object({
   results: z.array(importResultItemSchema),
 });
 export type ImportJob = z.infer<typeof importJobSchema>;
+
+// Detect-then-confirm shortcut classification: scans existing "reference" bookmarks and
+// proposes candidates for the user to review, rather than reclassifying anything outright.
+export const shortcutCandidateSchema = z.object({
+  id: z.number(),
+  url: z.string(),
+  title: z.string(),
+  favicon: z.string().nullable(),
+  reason: z.string(),
+});
+export type ShortcutCandidate = z.infer<typeof shortcutCandidateSchema>;
+
+export const detectShortcutsResponseSchema = z.object({
+  candidates: z.array(shortcutCandidateSchema),
+});
+export type DetectShortcutsResponse = z.infer<typeof detectShortcutsResponseSchema>;
+
+export const confirmShortcutsRequestSchema = z.object({
+  ids: z.array(z.number()).min(1),
+});
+export type ConfirmShortcutsRequest = z.infer<typeof confirmShortcutsRequestSchema>;

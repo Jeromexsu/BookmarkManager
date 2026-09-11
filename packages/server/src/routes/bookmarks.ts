@@ -4,11 +4,14 @@ import {
   createBookmarkRequestSchema,
   previewBookmarkRequestSchema,
   updateBookmarkRequestSchema,
+  confirmShortcutsRequestSchema,
   type Bookmark,
+  type ShortcutCandidate,
 } from "@bookmark-manager/shared";
 import { db } from "../db/client.js";
 import { bookmarks, tags, bookmarkTags, categories, projects } from "../db/schema.js";
 import { generateTags } from "../ai/tagging.js";
+import { classifyShortcut } from "../ai/classify.js";
 
 async function hydrateBookmarks(rows: (typeof bookmarks.$inferSelect)[]): Promise<Bookmark[]> {
   if (rows.length === 0) return [];
@@ -49,6 +52,7 @@ async function hydrateBookmarks(rows: (typeof bookmarks.$inferSelect)[]): Promis
     category: row.categoryId !== null ? (categoryNameById.get(row.categoryId) ?? null) : null,
     project: row.projectId !== null ? (projectNameById.get(row.projectId) ?? null) : null,
     status: row.status as Bookmark["status"],
+    type: row.type as Bookmark["type"],
     tags: tagsByBookmark.get(row.id) ?? [],
     createdAt: row.createdAt.toISOString(),
   }));
@@ -94,6 +98,18 @@ async function resolveProjectId(name: string): Promise<number> {
     .onConflictDoUpdate({ target: projects.name, set: { name } })
     .returning();
   return row.id;
+}
+
+// A bare domain root (no path/query/fragment) is a strong "this is an entrance page, not a
+// specific piece of content" signal on its own — used to pre-filter candidates before the
+// (costlier) LLM content check in the detect-shortcuts route below.
+function isRootUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (parsed.pathname === "/" || parsed.pathname === "") && !parsed.search && !parsed.hash;
+  } catch {
+    return false;
+  }
 }
 
 async function tagBookmarkAsync(bookmarkId: number, content: string) {
@@ -197,13 +213,14 @@ export async function bookmarkRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
 
-    const { title, summary, category, project, tags: newTags } = parsed.data;
+    const { title, summary, category, project, type, tags: newTags } = parsed.data;
     const patch: Partial<typeof bookmarks.$inferInsert> = {};
 
     if (title !== undefined) patch.title = title;
     if (summary !== undefined) patch.summary = summary || null;
     if (category !== undefined) patch.categoryId = category ? await resolveCategoryId(category) : null;
     if (project !== undefined) patch.projectId = project ? await resolveProjectId(project) : null;
+    if (type !== undefined) patch.type = type;
 
     // Drizzle/Postgres reject an UPDATE with an empty SET clause — a patch that only touches
     // tags (handled separately below) would otherwise leave `patch` empty.
@@ -230,5 +247,56 @@ export async function bookmarkRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: "Bookmark not found" });
     }
     return reply.code(204).send();
+  });
+
+  // Proposes shortcut candidates for review — never reclassifies anything outright. Cheap: no
+  // network fetching (reuses already-scraped content), and the LLM call only runs for bookmarks
+  // that already pass the bare-root-URL heuristic, not the whole table.
+  app.post("/bookmarks/detect-shortcuts", async (request, reply) => {
+    const rows = await db.select().from(bookmarks).where(eq(bookmarks.type, "reference"));
+    const candidates: ShortcutCandidate[] = [];
+
+    for (const row of rows) {
+      if (!isRootUrl(row.url)) continue;
+
+      if (!row.content) {
+        candidates.push({
+          id: row.id,
+          url: row.url,
+          title: row.title,
+          favicon: row.favicon,
+          reason: "Bare domain root URL (no content scraped)",
+        });
+        continue;
+      }
+
+      try {
+        const result = await classifyShortcut(row.title, row.content);
+        if (result.isShortcut) {
+          candidates.push({ id: row.id, url: row.url, title: row.title, favicon: row.favicon, reason: result.reason });
+        }
+      } catch (err) {
+        app.log.error(err, `Shortcut classification failed for bookmark ${row.id}`);
+        candidates.push({
+          id: row.id,
+          url: row.url,
+          title: row.title,
+          favicon: row.favicon,
+          reason: "Bare domain root URL (classification failed, heuristic only)",
+        });
+      }
+    }
+
+    return reply.send({ candidates } satisfies { candidates: ShortcutCandidate[] });
+  });
+
+  app.post("/bookmarks/confirm-shortcuts", async (request, reply) => {
+    const parsed = confirmShortcutsRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.flatten() });
+    }
+
+    await db.update(bookmarks).set({ type: "shortcut" }).where(inArray(bookmarks.id, parsed.data.ids));
+    return { updated: parsed.data.ids.length };
   });
 }

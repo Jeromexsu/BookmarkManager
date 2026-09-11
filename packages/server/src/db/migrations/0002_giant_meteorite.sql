@@ -1,0 +1,1 @@
+ALTER TABLE "bookmarks" ADD COLUMN "type" text DEFAULT 'reference' NOT NULL;
