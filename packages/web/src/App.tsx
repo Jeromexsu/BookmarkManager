@@ -12,11 +12,11 @@ export function App() {
   const { data: projects = [] } = useProjects();
   const [view, setView] = useState<View>("references");
 
-  // Unresolved (status !== "tagged") gets its own dedicated view regardless of type — most
+  // Unresolved (status !== "resolved") gets its own dedicated view regardless of type — most
   // arrive here because import couldn't scrape them, so we don't even know yet whether
   // they're a reference or a shortcut. Resolved items split by type as before.
-  const pending = bookmarks.filter((b) => b.status !== "tagged");
-  const references = bookmarks.filter((b) => b.type === "reference" && b.status === "tagged");
+  const pending = bookmarks.filter((b) => b.status !== "resolved");
+  const references = bookmarks.filter((b) => b.type === "reference" && b.status === "resolved");
   const shortcuts = bookmarks.filter((b) => b.type === "shortcut");
 
   return (

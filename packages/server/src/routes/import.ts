@@ -66,7 +66,7 @@ async function importOne(item: { url: string; title: string }): Promise<ImportRe
 
     const [row] = await db
       .insert(bookmarks)
-      .values({ url: item.url, title: item.title, content, favicon, summary: tagged.summary, status: "tagged" })
+      .values({ url: item.url, title: item.title, content, favicon, summary: tagged.summary, status: "resolved" })
       .returning();
     await linkTags(row.id, tagged.tags);
     return { url: item.url, title: item.title, outcome: "tagged", reason: null };

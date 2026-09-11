@@ -26,7 +26,7 @@ interface BookmarkSummary {
   category: string | null;
   project: string | null;
   tags: string[];
-  status: "pending" | "tagged" | "failed";
+  status: "pending" | "resolved" | "failed";
 }
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };

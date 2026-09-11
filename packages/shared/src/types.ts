@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-export const bookmarkStatusSchema = z.enum(["pending", "tagged", "failed"]);
+// "resolved" means the user is done deciding what this bookmark is — not "has tags." A
+// resolved bookmark can have zero tags (the user judged it needs none); tags/summary presence
+// is a convenience trigger for resolving, never the definition of it.
+export const bookmarkStatusSchema = z.enum(["pending", "resolved", "failed"]);
 export type BookmarkStatus = z.infer<typeof bookmarkStatusSchema>;
 
 // "reference" has real content worth reading/tagging; "shortcut" is a pure entrance/portal
@@ -35,7 +38,7 @@ export const createBookmarkRequestSchema = z.object({
   category: z.string().optional(),
   project: z.string().optional(),
   // Present when the caller already has confirmed tags (the extension's preview-then-confirm
-  // flow) — the bookmark is saved as "tagged" immediately instead of tagged asynchronously.
+  // flow) — the bookmark is saved as "resolved" immediately instead of resolved asynchronously.
   tags: z.array(z.string()).optional(),
   summary: z.string().optional(),
 });
@@ -77,6 +80,9 @@ export const updateBookmarkRequestSchema = z.object({
   tags: z.array(z.string()).optional(),
   // Manual override/undo for the bulk detect-shortcuts flow below.
   type: bookmarkTypeSchema.optional(),
+  // Explicit "I'm done with this one" — the only way to resolve a bookmark that doesn't need
+  // tags or a summary at all. Adding tags/a summary still resolves it too, as a convenience.
+  resolved: z.boolean().optional(),
 });
 export type UpdateBookmarkRequest = z.infer<typeof updateBookmarkRequestSchema>;
 

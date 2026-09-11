@@ -119,7 +119,7 @@ async function tagBookmarkAsync(bookmarkId: number, content: string) {
     await linkTags(bookmarkId, result.tags);
     await db
       .update(bookmarks)
-      .set({ summary: result.summary, status: "tagged" })
+      .set({ summary: result.summary, status: "resolved" })
       .where(eq(bookmarks.id, bookmarkId));
   } catch (err) {
     await db.update(bookmarks).set({ status: "failed" }).where(eq(bookmarks.id, bookmarkId));
@@ -140,16 +140,17 @@ interface IncomingBookmarkSave {
 // Saving a URL that's already in the table must not create a second row for it — that just
 // leaves the original (often still-pending) row stranded forever. What "already exists" means
 // splits into two very different cases:
-//  - The existing row isn't tagged yet (pending/failed) — nothing on it is trustworthy or
-//    finished, so this save IS the resolution: whatever fields it provides simply take over.
-//  - The existing row is already tagged — that's someone's finished, deliberate data, so a
+//  - The existing row isn't resolved yet (pending/failed) — nothing on it is trustworthy or
+//    finished, so this save IS the resolution: whatever fields it provides simply take over,
+//    and reaching this row at all resolves it, whether or not tags/a summary came along.
+//  - The existing row is already resolved — that's someone's finished, deliberate data, so a
 //    field both sides disagree on is a real conflict, reported for the caller to resolve via
 //    PATCH rather than silently overwritten. Fields the existing row doesn't have yet still
 //    fill in automatically either way.
 async function handleExistingBookmark(existingRow: typeof bookmarks.$inferSelect, incoming: IncomingBookmarkSave, reply: FastifyReply) {
   const [existing] = await hydrateBookmarks([existingRow]);
 
-  if (existing.status !== "tagged") {
+  if (existing.status !== "resolved") {
     return resolveBookmarkSave(existingRow, existing, incoming, reply);
   }
   return mergeBookmarkSave(existingRow, existing, incoming, reply);
@@ -161,7 +162,7 @@ async function resolveBookmarkSave(
   incoming: IncomingBookmarkSave,
   reply: FastifyReply
 ) {
-  const patch: Partial<typeof bookmarks.$inferInsert> = {};
+  const patch: Partial<typeof bookmarks.$inferInsert> = { status: "resolved" };
 
   if (incoming.title && incoming.title !== existing.title) patch.title = incoming.title;
   if (incoming.content) patch.content = incoming.content;
@@ -178,16 +179,7 @@ async function resolveBookmarkSave(
 
   const tags = incoming.tags && incoming.tags.length > 0 ? incoming.tags : undefined;
 
-  const finalSummary = summary ?? existing.summary;
-  const finalTagCount = tags ? tags.length : existing.tags.length;
-  if (finalTagCount > 0 || finalSummary) {
-    patch.status = "tagged";
-  }
-
-  let row = existingRow;
-  if (Object.keys(patch).length > 0) {
-    [row] = await db.update(bookmarks).set(patch).where(eq(bookmarks.id, existingRow.id)).returning();
-  }
+  const [row] = await db.update(bookmarks).set(patch).where(eq(bookmarks.id, existingRow.id)).returning();
   if (tags) {
     // Matches PATCH's convention: presence of tags means "replace the full set," not merge.
     await setTags(row.id, tags);
@@ -312,7 +304,7 @@ export async function bookmarkRoutes(app: FastifyInstance) {
           summary: summary || null,
           categoryId,
           projectId,
-          status: "tagged",
+          status: "resolved",
         })
         .returning();
 
@@ -353,7 +345,7 @@ export async function bookmarkRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
 
-    const { title, summary, category, project, type, tags: newTags } = parsed.data;
+    const { title, summary, category, project, type, tags: newTags, resolved } = parsed.data;
     const patch: Partial<typeof bookmarks.$inferInsert> = {};
 
     if (title !== undefined) patch.title = title;
@@ -362,12 +354,16 @@ export async function bookmarkRoutes(app: FastifyInstance) {
     if (project !== undefined) patch.projectId = project ? await resolveProjectId(project) : null;
     if (type !== undefined) patch.type = type;
 
-    // Manually adding tags/a summary — or resolving a pending item as a shortcut, which by
-    // definition needs neither — means this is no longer "unresolved." Keep status in sync so
-    // the UI doesn't keep showing a stale pending/failed badge over data the user has since
-    // filled in (or a decision they've since made) by hand.
-    if ((newTags !== undefined && newTags.length > 0) || (summary !== undefined && summary) || type === "shortcut") {
-      patch.status = "tagged";
+    // Tags/a summary/marking as a shortcut are convenience triggers for "resolved" — none of
+    // them define it. `resolved: true` is the actual, explicit way to resolve a bookmark that
+    // needs none of those (the user just decided it's done as-is).
+    if (
+      resolved === true ||
+      (newTags !== undefined && newTags.length > 0) ||
+      (summary !== undefined && summary) ||
+      type === "shortcut"
+    ) {
+      patch.status = "resolved";
     }
 
     // Drizzle/Postgres reject an UPDATE with an empty SET clause — a patch that only touches
@@ -448,7 +444,7 @@ export async function bookmarkRoutes(app: FastifyInstance) {
     // import couldn't scrape them, and without this they'd wrongly linger in a pending/review queue.
     await db
       .update(bookmarks)
-      .set({ type: "shortcut", status: "tagged" })
+      .set({ type: "shortcut", status: "resolved" })
       .where(inArray(bookmarks.id, parsed.data.ids));
     return { updated: parsed.data.ids.length };
   });

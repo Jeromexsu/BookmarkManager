@@ -51,6 +51,12 @@ export function BookmarkRow({ bookmark, showResolveActions = false }: BookmarkRo
     updateMutation.mutate({ id: bookmark.id, patch: { type: "shortcut" } });
   }
 
+  // Explicit resolve for the "this is fine as-is, no tags needed" case — adding tags/a summary
+  // resolves it too, as a side effect, but that's a convenience, not the only path.
+  function handleMarkResolved() {
+    updateMutation.mutate({ id: bookmark.id, patch: { resolved: true } });
+  }
+
   return (
     <li className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 flex gap-3">
       <div className="mt-1">
@@ -68,12 +74,20 @@ export function BookmarkRow({ bookmark, showResolveActions = false }: BookmarkRo
           </a>
           <div className="flex items-center gap-2 shrink-0">
             {showResolveActions && (
-              <button
-                onClick={handleMarkAsShortcut}
-                className="text-violet-600 dark:text-violet-400 hover:text-violet-700 text-xs font-medium whitespace-nowrap"
-              >
-                📦 It's a shortcut
-              </button>
+              <>
+                <button
+                  onClick={handleMarkResolved}
+                  className="text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 text-xs font-medium whitespace-nowrap"
+                >
+                  ✓ Mark resolved
+                </button>
+                <button
+                  onClick={handleMarkAsShortcut}
+                  className="text-violet-600 dark:text-violet-400 hover:text-violet-700 text-xs font-medium whitespace-nowrap"
+                >
+                  📦 It's a shortcut
+                </button>
+              </>
             )}
             <button onClick={handleDelete} className="text-neutral-400 hover:text-red-600 text-xs">
               Delete

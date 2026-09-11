@@ -69,7 +69,7 @@ export function useBookmarks() {
   return useQuery({
     queryKey: bookmarksKey,
     queryFn: listBookmarks,
-    // Picks up async tagging (status: "pending" -> "tagged") without a manual refresh.
+    // Picks up async tagging (status: "pending" -> "resolved") without a manual refresh.
     refetchInterval: 5000,
   });
 }
