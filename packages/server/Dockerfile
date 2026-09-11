@@ -1,7 +1,7 @@
 # Build context is the repo root (see docker-compose.yml), since this needs the
 # shared and web workspaces too, not just the server.
 
-FROM node:22-slim AS build
+FROM node:24-slim AS build
 WORKDIR /app
 
 COPY package.json ./
@@ -16,7 +16,7 @@ COPY packages/server packages/server
 COPY packages/web packages/web
 RUN npm run build
 
-FROM node:22-slim AS runtime
+FROM node:24-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
