@@ -65,13 +65,28 @@ function flattenBookmarks(nodes: BookmarkTreeNode[]): { url: string; title: stri
 }
 
 async function pollImport(serverUrl: string, jobId: number) {
+  const MAX_CONSECUTIVE_FAILURES = 5;
+  let consecutiveFailures = 0;
+
   for (;;) {
-    const res = await fetch(`${serverUrl.replace(/\/$/, "")}/api/import/${jobId}`);
-    if (!res.ok) {
-      progressText.textContent = `Lost track of the import job (server responded ${res.status}).`;
-      return;
+    let job: ImportJob;
+    try {
+      const res = await fetch(`${serverUrl.replace(/\/$/, "")}/api/import/${jobId}`);
+      if (!res.ok) throw new Error(`Server responded ${res.status}`);
+      job = (await res.json()) as ImportJob;
+      consecutiveFailures = 0;
+    } catch (err) {
+      // A transient hiccup (e.g. the server restarting) must not silently kill polling —
+      // that leaves the page stuck showing a progress bar forever with no way to recover.
+      consecutiveFailures++;
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        progressText.textContent = `Lost track of the import job: ${err instanceof Error ? err.message : "unknown error"}.`;
+        return;
+      }
+      progressText.textContent = "Reconnecting…";
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      continue;
     }
-    const job = (await res.json()) as ImportJob;
 
     const pct = job.total > 0 ? Math.round((job.processed / job.total) * 100) : 100;
     progressFill.style.width = `${pct}%`;

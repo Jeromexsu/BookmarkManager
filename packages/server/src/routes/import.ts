@@ -4,7 +4,7 @@ import { startImportRequestSchema, type ImportResultItem } from "@bookmark-manag
 import { db } from "../db/client.js";
 import { bookmarks, importJobs } from "../db/schema.js";
 import { generateTags } from "../ai/tagging.js";
-import { extractTextFromHtml } from "../extraction/html.js";
+import { extractTextFromHtml, extractFaviconUrl } from "../extraction/html.js";
 import { linkTags } from "./bookmarks.js";
 
 const FETCH_TIMEOUT_MS = 8000;
@@ -32,22 +32,34 @@ async function importOne(item: { url: string; title: string }): Promise<ImportRe
   }
 
   const content = extractTextFromHtml(html);
+  const favicon = extractFaviconUrl(html, item.url);
 
   if (content.length < MIN_CONTENT_LENGTH) {
-    await db.insert(bookmarks).values({ url: item.url, title: item.title, status: "pending" });
+    await db.insert(bookmarks).values({ url: item.url, title: item.title, favicon, status: "pending" });
     return { url: item.url, title: item.title, outcome: "pending", reason: "Couldn't extract page content" };
   }
 
   try {
     const tagged = await generateTags(content);
+
+    if (!tagged.meaningful) {
+      await db.insert(bookmarks).values({ url: item.url, title: item.title, content, favicon, status: "pending" });
+      return {
+        url: item.url,
+        title: item.title,
+        outcome: "pending",
+        reason: "Page looked like a wall/interstitial, not real content",
+      };
+    }
+
     const [row] = await db
       .insert(bookmarks)
-      .values({ url: item.url, title: item.title, content, summary: tagged.summary, status: "tagged" })
+      .values({ url: item.url, title: item.title, content, favicon, summary: tagged.summary, status: "tagged" })
       .returning();
     await linkTags(row.id, tagged.tags);
     return { url: item.url, title: item.title, outcome: "tagged", reason: null };
   } catch (err) {
-    await db.insert(bookmarks).values({ url: item.url, title: item.title, content, status: "pending" });
+    await db.insert(bookmarks).values({ url: item.url, title: item.title, content, favicon, status: "pending" });
     return {
       url: item.url,
       title: item.title,

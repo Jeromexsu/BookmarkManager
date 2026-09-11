@@ -20,3 +20,19 @@ export function extractTextFromHtml(html: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+// Firefox's bookmarks API exposes no favicon, and imported bookmarks aren't open tabs (the
+// normal Save flow reads tab.favIconUrl instead) — so pull one from the page we already fetched.
+export function extractFaviconUrl(html: string, pageUrl: string): string | null {
+  const linkMatch = html.match(/<link[^>]+rel=["'](?:shortcut icon|icon|apple-touch-icon)["'][^>]*>/i);
+  const hrefMatch = linkMatch?.[0].match(/href=["']([^"']+)["']/i);
+
+  try {
+    if (hrefMatch) {
+      return new URL(hrefMatch[1], pageUrl).toString();
+    }
+    return new URL("/favicon.ico", pageUrl).toString();
+  } catch {
+    return null;
+  }
+}

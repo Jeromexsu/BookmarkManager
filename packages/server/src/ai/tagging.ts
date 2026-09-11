@@ -4,6 +4,11 @@ import { z } from "zod";
 const taggingResultSchema = z.object({
   tags: z.array(z.string()).max(8),
   summary: z.string(),
+  // False for boilerplate that happens to be long enough to pass a naive length check —
+  // cookie/consent walls, bot-check interstitials, paywall notices, login screens, error
+  // pages. Callers doing unattended bulk tagging (import) should treat false as "couldn't
+  // really tag this," not just take tags/summary at face value.
+  meaningful: z.boolean(),
 });
 export type TaggingResult = z.infer<typeof taggingResultSchema>;
 
@@ -32,8 +37,12 @@ export async function generateTags(content: string): Promise<TaggingResult> {
         role: "system",
         content:
           "You tag bookmarked web pages. Given page content, respond with strict JSON " +
-          '{"tags": string[] (up to 5, lowercase, short), "summary": string (one sentence)}. ' +
-          "No prose outside the JSON.",
+          '{"tags": string[] (up to 5, lowercase, short), "summary": string (one sentence), ' +
+          '"meaningful": boolean}. Set meaningful to false if the content is NOT genuine page ' +
+          "content — e.g. a cookie/consent notice, bot-check or \"enable JavaScript\" " +
+          "interstitial, paywall/login wall, or generic error page — even if it's long enough " +
+          "to look substantial. When meaningful is false, still fill tags/summary with your " +
+          "best guess. No prose outside the JSON.",
       },
       { role: "user", content: truncated },
     ],
