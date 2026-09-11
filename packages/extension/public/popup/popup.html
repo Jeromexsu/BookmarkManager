@@ -8,6 +8,10 @@
         --accent-hover: #2f5cd6;
         --accent-tint: #eaf0fe;
         --accent-tint-text: #2f56c4;
+        --category-tint: #fef3c7;
+        --category-tint-text: #92620a;
+        --project-tint: #f1e9fe;
+        --project-tint-text: #6d3fd1;
         --border: #e8e8ec;
         --text: #17171a;
         --muted: #8a8a94;
@@ -26,6 +30,10 @@
           --accent-hover: #6f98ff;
           --accent-tint: #1c2740;
           --accent-tint-text: #a9c0ff;
+          --category-tint: #3d2f10;
+          --category-tint-text: #f0c674;
+          --project-tint: #2c2140;
+          --project-tint-text: #c9a8ff;
           --border: #2c2c33;
           --text: #f0f0f2;
           --muted: #8f8f99;
@@ -277,16 +285,56 @@
       }
       button.primary:hover:not(:disabled) { background: var(--accent-hover); }
 
-      #bookmarkList { max-height: 400px; overflow-y: auto; margin-top: 10px; }
+      .group-toggle { display: flex; gap: 6px; margin: 10px 0; }
+      .group-tab {
+        flex: 1;
+        border: 1px solid var(--border);
+        background: transparent;
+        padding: 5px 8px;
+        border-radius: 999px;
+        font: inherit;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--muted);
+        cursor: pointer;
+        transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+      }
+      .group-tab.active.by-category { background: var(--category-tint); color: var(--category-tint-text); border-color: transparent; }
+      .group-tab.active.by-project { background: var(--project-tint); color: var(--project-tint-text); border-color: transparent; }
+
+      #bookmarkTree { max-height: 380px; overflow-y: auto; margin-top: 4px; }
+
+      .group-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 4px;
+        cursor: pointer;
+        border-radius: 6px;
+        font-size: 12.5px;
+        font-weight: 700;
+      }
+      .group-header:hover { background: var(--bg-subtle); }
+      .group-chevron {
+        font-size: 9px;
+        color: var(--muted);
+        flex: none;
+        width: 10px;
+        display: inline-block;
+        transition: transform 0.15s ease;
+      }
+      .group-chevron.expanded { transform: rotate(90deg); }
+      .group-count { margin-left: auto; font-size: 10.5px; font-weight: 600; color: var(--muted); }
+      .group-children { padding-left: 12px; margin-left: 7px; border-left: 1px solid var(--border); }
 
       .bm-item {
         display: flex;
         gap: 8px;
-        padding: 9px 4px;
+        padding: 8px 4px;
         border-bottom: 1px solid var(--border);
         cursor: pointer;
       }
-      .bm-item:last-child { border-bottom: none; }
+      .group-children .bm-item:last-child { border-bottom: none; }
       .bm-item:hover { background: var(--bg-subtle); }
 
       .bm-favicon { width: 16px; height: 16px; border-radius: 3px; flex: none; margin-top: 2px; }
@@ -310,12 +358,12 @@
       .bm-chip {
         font-size: 10px;
         font-weight: 600;
-        background: var(--bg-subtle);
-        color: var(--muted);
         padding: 2px 7px;
         border-radius: 999px;
       }
       .bm-chip.tag { background: var(--accent-tint); color: var(--accent-tint-text); }
+      .bm-chip.category { background: var(--category-tint); color: var(--category-tint-text); }
+      .bm-chip.project { background: var(--project-tint); color: var(--project-tint-text); }
 
       #browseEmpty { text-align: center; color: var(--muted); font-size: 12px; padding: 24px 0; }
 
@@ -399,7 +447,11 @@
 
     <div id="browseView" hidden>
       <input id="searchInput" type="text" placeholder="Search bookmarks…" />
-      <div id="bookmarkList"></div>
+      <div class="group-toggle">
+        <button id="groupByCategory" type="button" class="group-tab active by-category">📁 Categories</button>
+        <button id="groupByProject" type="button" class="group-tab by-project">📦 Projects</button>
+      </div>
+      <div id="bookmarkTree"></div>
       <p id="browseEmpty" hidden>No bookmarks yet.</p>
     </div>
 

@@ -23,8 +23,10 @@ const tabBrowseBtn = document.getElementById("tabBrowse") as HTMLButtonElement;
 const saveView = document.getElementById("saveView") as HTMLDivElement;
 const browseView = document.getElementById("browseView") as HTMLDivElement;
 const searchInput = document.getElementById("searchInput") as HTMLInputElement;
-const bookmarkList = document.getElementById("bookmarkList") as HTMLDivElement;
+const bookmarkTree = document.getElementById("bookmarkTree") as HTMLDivElement;
 const browseEmpty = document.getElementById("browseEmpty") as HTMLParagraphElement;
+const groupByCategoryBtn = document.getElementById("groupByCategory") as HTMLButtonElement;
+const groupByProjectBtn = document.getElementById("groupByProject") as HTMLButtonElement;
 
 const allFields = [titleInput, urlInput, contentInput, categoryInput, projectInput, tagInput, summaryInput];
 
@@ -44,6 +46,9 @@ interface BookmarkSummary {
 }
 
 let allBookmarks: BookmarkSummary[] | null = null;
+type GroupMode = "category" | "project";
+let groupMode: GroupMode = "category";
+const expandedGroups = new Set<string>();
 
 function renderTags() {
   tagsContainer.querySelectorAll(".pill").forEach((el) => el.remove());
@@ -170,55 +175,133 @@ optionsLink.addEventListener("click", (e) => {
   browser.runtime.openOptionsPage();
 });
 
-function renderBookmarkList(items: BookmarkSummary[]) {
-  bookmarkList.innerHTML = "";
-  browseEmpty.hidden = items.length > 0;
-
-  for (const bm of items) {
-    const row = document.createElement("div");
-    row.className = "bm-item";
-    row.addEventListener("click", () => browser.tabs.create({ url: bm.url }));
-
-    if (bm.favicon) {
-      const icon = document.createElement("img");
-      icon.className = "bm-favicon";
-      icon.src = bm.favicon;
-      icon.alt = "";
-      icon.addEventListener("error", () => icon.remove());
-      row.appendChild(icon);
-    }
-
-    const body = document.createElement("div");
-    body.className = "bm-body";
-
-    const title = document.createElement("div");
-    title.className = "bm-title";
-    title.textContent = bm.title;
-    body.appendChild(title);
-
-    const url = document.createElement("div");
-    url.className = "bm-url";
-    url.textContent = bm.url;
-    body.appendChild(url);
-
-    const meta = document.createElement("div");
-    meta.className = "bm-meta";
-    if (bm.category) meta.appendChild(makeChip(`📁 ${bm.category}`));
-    if (bm.project) meta.appendChild(makeChip(`📦 ${bm.project}`));
-    for (const tag of bm.tags) meta.appendChild(makeChip(tag, true));
-    if (meta.children.length > 0) body.appendChild(meta);
-
-    row.appendChild(body);
-    bookmarkList.appendChild(row);
-  }
-}
-
-function makeChip(text: string, isTag = false): HTMLSpanElement {
+function makeChip(text: string, kind: "tag" | "category" | "project"): HTMLSpanElement {
   const chip = document.createElement("span");
-  chip.className = isTag ? "bm-chip tag" : "bm-chip";
+  chip.className = `bm-chip ${kind}`;
   chip.textContent = text;
   return chip;
 }
+
+function renderBookmarkRow(bm: BookmarkSummary, opts: { hideCategory: boolean; hideProject: boolean }): HTMLDivElement {
+  const row = document.createElement("div");
+  row.className = "bm-item";
+  row.addEventListener("click", () => browser.tabs.create({ url: bm.url }));
+
+  if (bm.favicon) {
+    const icon = document.createElement("img");
+    icon.className = "bm-favicon";
+    icon.src = bm.favicon;
+    icon.alt = "";
+    icon.addEventListener("error", () => icon.remove());
+    row.appendChild(icon);
+  }
+
+  const body = document.createElement("div");
+  body.className = "bm-body";
+
+  const title = document.createElement("div");
+  title.className = "bm-title";
+  title.textContent = bm.title;
+  body.appendChild(title);
+
+  const url = document.createElement("div");
+  url.className = "bm-url";
+  url.textContent = bm.url;
+  body.appendChild(url);
+
+  const meta = document.createElement("div");
+  meta.className = "bm-meta";
+  if (bm.category && !opts.hideCategory) meta.appendChild(makeChip(`📁 ${bm.category}`, "category"));
+  if (bm.project && !opts.hideProject) meta.appendChild(makeChip(`📦 ${bm.project}`, "project"));
+  for (const tag of bm.tags) meta.appendChild(makeChip(tag, "tag"));
+  if (meta.children.length > 0) body.appendChild(meta);
+
+  row.appendChild(body);
+  return row;
+}
+
+// Groups by category (all bookmarks, "Uncategorized" bucket for those without one) or by
+// project (only bookmarks that have one — no catch-all bucket, per the "see projects" ask).
+function buildGroups(items: BookmarkSummary[]): Map<string, BookmarkSummary[]> {
+  const groups = new Map<string, BookmarkSummary[]>();
+  const relevant = groupMode === "project" ? items.filter((bm) => bm.project) : items;
+
+  for (const bm of relevant) {
+    const key = groupMode === "project" ? bm.project! : (bm.category ?? "Uncategorized");
+    const list = groups.get(key) ?? [];
+    list.push(bm);
+    groups.set(key, list);
+  }
+  return groups;
+}
+
+function renderTree(items: BookmarkSummary[]) {
+  bookmarkTree.innerHTML = "";
+  const groups = buildGroups(items);
+  const isSearching = searchInput.value.trim() !== "";
+
+  const sortedKeys = [...groups.keys()].sort((a, b) => {
+    if (a === "Uncategorized") return 1;
+    if (b === "Uncategorized") return -1;
+    return a.localeCompare(b);
+  });
+
+  browseEmpty.hidden = sortedKeys.length > 0;
+
+  for (const key of sortedKeys) {
+    const bookmarksInGroup = groups.get(key)!;
+    const folder = document.createElement("div");
+
+    const header = document.createElement("div");
+    header.className = "group-header";
+
+    const isExpanded = isSearching || expandedGroups.has(key);
+    const chevron = document.createElement("span");
+    chevron.className = "group-chevron" + (isExpanded ? " expanded" : "");
+    chevron.textContent = "▸";
+    header.appendChild(chevron);
+
+    const icon = groupMode === "project" ? "📦" : "📁";
+    const label = document.createElement("span");
+    label.textContent = `${icon} ${key}`;
+    header.appendChild(label);
+
+    const count = document.createElement("span");
+    count.className = "group-count";
+    count.textContent = String(bookmarksInGroup.length);
+    header.appendChild(count);
+
+    const children = document.createElement("div");
+    children.className = "group-children";
+    children.hidden = !isExpanded;
+    for (const bm of bookmarksInGroup) {
+      children.appendChild(
+        renderBookmarkRow(bm, { hideCategory: groupMode === "category", hideProject: groupMode === "project" })
+      );
+    }
+
+    header.addEventListener("click", () => {
+      const nowExpanded = children.hidden;
+      children.hidden = !nowExpanded;
+      chevron.classList.toggle("expanded", nowExpanded);
+      if (nowExpanded) expandedGroups.add(key);
+      else expandedGroups.delete(key);
+    });
+
+    folder.appendChild(header);
+    folder.appendChild(children);
+    bookmarkTree.appendChild(folder);
+  }
+}
+
+function setGroupMode(mode: GroupMode) {
+  groupMode = mode;
+  groupByCategoryBtn.classList.toggle("active", mode === "category");
+  groupByProjectBtn.classList.toggle("active", mode === "project");
+  applySearch();
+}
+groupByCategoryBtn.addEventListener("click", () => setGroupMode("category"));
+groupByProjectBtn.addEventListener("click", () => setGroupMode("project"));
 
 function applySearch() {
   if (!allBookmarks) return;
@@ -230,12 +313,12 @@ function applySearch() {
           .some((field) => field!.toLowerCase().includes(query))
       )
     : allBookmarks;
-  renderBookmarkList(filtered);
+  renderTree(filtered);
 }
 searchInput.addEventListener("input", applySearch);
 
 async function loadBookmarks() {
-  bookmarkList.innerHTML = "";
+  bookmarkTree.innerHTML = "";
   browseEmpty.hidden = true;
   setStatus("Loading bookmarks…");
 
