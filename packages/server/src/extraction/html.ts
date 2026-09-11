@@ -1,4 +1,4 @@
-// Deliberately crude, best-effort text extraction for bulk-imported bookmarks — no headless
+// Deliberately crude, best-effort text extraction for bulk-imported bookmarks -- no headless
 // browser, no JS rendering. Pages that need either of those (SPAs, anti-scraping walls) will
 // just yield too little text and get saved untagged rather than failing the import outright.
 export function extractTextFromHtml(html: string): string {
@@ -14,6 +14,9 @@ export function extractTextFromHtml(html: string): string {
     .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')
     .replace(/&#0?39;/gi, "'")
+    // Postgres text columns reject NUL bytes outright; some pages (odd encodings, binary
+    // content misidentified as HTML) leak them through untouched by the above.
+    .replace(/\u0000/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }

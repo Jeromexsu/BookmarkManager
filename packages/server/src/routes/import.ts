@@ -68,11 +68,22 @@ async function runImportJob(jobId: number, items: { url: string; title: string }
     while (queue.length > 0) {
       const item = queue.shift()!;
       let result: ImportResultItem;
-      if (seenUrls.has(item.url)) {
-        result = { url: item.url, title: item.title, outcome: "duplicate", reason: null };
-      } else {
-        seenUrls.add(item.url);
-        result = await importOne(item);
+      try {
+        if (seenUrls.has(item.url)) {
+          result = { url: item.url, title: item.title, outcome: "duplicate", reason: null };
+        } else {
+          seenUrls.add(item.url);
+          result = await importOne(item);
+        }
+      } catch (err) {
+        // One bad item (e.g. a page that trips a DB constraint) must never take the whole
+        // job down — every other URL still deserves a result.
+        result = {
+          url: item.url,
+          title: item.title,
+          outcome: "invalid",
+          reason: err instanceof Error ? err.message : "Unexpected error",
+        };
       }
       results.push(result);
       processed++;
@@ -80,8 +91,11 @@ async function runImportJob(jobId: number, items: { url: string; title: string }
     }
   }
 
-  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-  await db.update(importJobs).set({ status: "completed" }).where(eq(importJobs.id, jobId));
+  try {
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+  } finally {
+    await db.update(importJobs).set({ status: "completed" }).where(eq(importJobs.id, jobId));
+  }
 }
 
 export async function importRoutes(app: FastifyInstance) {
