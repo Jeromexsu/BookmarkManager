@@ -2,9 +2,11 @@ import {
   type Bookmark,
   type CreateBookmarkRequest,
   type UpdateBookmarkRequest,
+  type ShortcutCandidate,
   listBookmarksResponseSchema,
   bookmarkSchema,
   nameListResponseSchema,
+  detectShortcutsResponseSchema,
 } from "@bookmark-manager/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -44,6 +46,21 @@ async function listNames(path: "categories" | "projects"): Promise<string[]> {
   const res = await fetch(`/api/${path}`);
   if (!res.ok) throw new Error(`Failed to load ${path}: ${res.status}`);
   return nameListResponseSchema.parse(await res.json()).names;
+}
+
+async function detectShortcuts(): Promise<ShortcutCandidate[]> {
+  const res = await fetch("/api/bookmarks/detect-shortcuts", { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to detect shortcuts: ${res.status}`);
+  return detectShortcutsResponseSchema.parse(await res.json()).candidates;
+}
+
+async function confirmShortcuts(ids: number[]): Promise<void> {
+  const res = await fetch("/api/bookmarks/confirm-shortcuts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) throw new Error(`Failed to confirm shortcuts: ${res.status}`);
 }
 
 const bookmarksKey = ["bookmarks"] as const;
@@ -89,6 +106,18 @@ export function useDeleteBookmark() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: deleteBookmark,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: bookmarksKey }),
+  });
+}
+
+export function useDetectShortcuts() {
+  return useMutation({ mutationFn: detectShortcuts });
+}
+
+export function useConfirmShortcuts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: confirmShortcuts,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: bookmarksKey }),
   });
 }
