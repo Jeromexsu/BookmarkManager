@@ -19,6 +19,18 @@ async function importOne(item: { url: string; title: string }): Promise<ImportRe
       headers: { "User-Agent": "Mozilla/5.0 (compatible; BookmarkManagerBot/1.0)" },
     });
     if (!res.ok) {
+      // 403/429 almost always mean "a bot detector is blocking us specifically," not "this URL
+      // is dead" — the page is alive (a real browser opens it fine), so it belongs with the
+      // other "alive but couldn't scrape" cases, not lumped in with genuinely broken links.
+      if (res.status === 403 || res.status === 429) {
+        await db.insert(bookmarks).values({ url: item.url, title: item.title, status: "pending" });
+        return {
+          url: item.url,
+          title: item.title,
+          outcome: "pending",
+          reason: `Blocked by anti-bot protection (HTTP ${res.status}) — page is likely fine, just not scrapable`,
+        };
+      }
       return { url: item.url, title: item.title, outcome: "invalid", reason: `HTTP ${res.status}` };
     }
     html = await res.text();
