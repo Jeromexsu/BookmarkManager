@@ -6,13 +6,11 @@ import { AddBookmarkForm } from "./AddBookmarkForm";
 
 interface ReferenceViewProps {
   bookmarks: Bookmark[];
-  categoryOptions: string[];
-  projectOptions: string[];
 }
 
 type SubView = "category" | "project" | "search";
 
-export function ReferenceView({ bookmarks, categoryOptions, projectOptions }: ReferenceViewProps) {
+export function ReferenceView({ bookmarks }: ReferenceViewProps) {
   const [subView, setSubView] = useState<SubView>("category");
 
   return (
@@ -35,18 +33,6 @@ export function ReferenceView({ bookmarks, categoryOptions, projectOptions }: Re
         </nav>
         <AddBookmarkForm />
       </div>
-
-      {/* Shared by every BookmarkRow, regardless of which sub-view rendered it. */}
-      <datalist id="category-options">
-        {categoryOptions.map((c) => (
-          <option key={c} value={c} />
-        ))}
-      </datalist>
-      <datalist id="project-options">
-        {projectOptions.map((p) => (
-          <option key={p} value={p} />
-        ))}
-      </datalist>
 
       {subView === "search" ? <BookmarkList bookmarks={bookmarks} /> : <GroupedCardView bookmarks={bookmarks} mode={subView} />}
     </div>

@@ -2,8 +2,9 @@ import { useState } from "react";
 import { useBookmarks, useCategories, useProjects } from "./api";
 import { ReferenceView } from "./ReferenceView";
 import { ShortcutView } from "./ShortcutView";
+import { PendingView } from "./PendingView";
 
-type View = "references" | "shortcuts";
+type View = "references" | "shortcuts" | "pending";
 
 export function App() {
   const { data: bookmarks = [], error } = useBookmarks();
@@ -11,7 +12,11 @@ export function App() {
   const { data: projects = [] } = useProjects();
   const [view, setView] = useState<View>("references");
 
-  const references = bookmarks.filter((b) => b.type === "reference");
+  // Unresolved (status !== "tagged") gets its own dedicated view regardless of type — most
+  // arrive here because import couldn't scrape them, so we don't even know yet whether
+  // they're a reference or a shortcut. Resolved items split by type as before.
+  const pending = bookmarks.filter((b) => b.status !== "tagged");
+  const references = bookmarks.filter((b) => b.type === "reference" && b.status === "tagged");
   const shortcuts = bookmarks.filter((b) => b.type === "shortcut");
 
   return (
@@ -20,7 +25,7 @@ export function App() {
         <div className="flex items-center gap-6">
           <h1 className="text-lg font-bold">🔖 Bookmark Manager</h1>
           <nav className="flex gap-1 bg-neutral-100 dark:bg-neutral-800 rounded-lg p-1">
-            {(["references", "shortcuts"] as const).map((v) => (
+            {(["references", "shortcuts", "pending"] as const).map((v) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
@@ -30,13 +35,13 @@ export function App() {
                     : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
                 }`}
               >
-                {v === "references" ? "📄 References" : "🔗 Shortcuts"}
+                {v === "references" ? "📄 References" : v === "shortcuts" ? "🔗 Shortcuts" : `⏳ Pending`}
               </button>
             ))}
           </nav>
         </div>
         <span className="text-xs text-neutral-400">
-          {references.length} references · {shortcuts.length} shortcuts
+          {references.length} references · {shortcuts.length} shortcuts · {pending.length} pending
         </span>
       </header>
 
@@ -46,11 +51,21 @@ export function App() {
         </p>
       )}
 
-      {view === "references" ? (
-        <ReferenceView bookmarks={references} categoryOptions={categories} projectOptions={projects} />
-      ) : (
-        <ShortcutView shortcuts={shortcuts} />
-      )}
+      {/* Shared by every BookmarkRow, regardless of which top-level view rendered it. */}
+      <datalist id="category-options">
+        {categories.map((c) => (
+          <option key={c} value={c} />
+        ))}
+      </datalist>
+      <datalist id="project-options">
+        {projects.map((p) => (
+          <option key={p} value={p} />
+        ))}
+      </datalist>
+
+      {view === "references" && <ReferenceView bookmarks={references} />}
+      {view === "shortcuts" && <ShortcutView shortcuts={shortcuts} />}
+      {view === "pending" && <PendingView pending={pending} />}
     </div>
   );
 }

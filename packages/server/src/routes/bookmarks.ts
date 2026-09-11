@@ -222,10 +222,11 @@ export async function bookmarkRoutes(app: FastifyInstance) {
     if (project !== undefined) patch.projectId = project ? await resolveProjectId(project) : null;
     if (type !== undefined) patch.type = type;
 
-    // Manually adding tags/a summary means this is no longer meaningfully "untagged" — keep
-    // status in sync so the UI doesn't keep showing a stale pending/failed badge over data
-    // the user has since filled in by hand.
-    if ((newTags !== undefined && newTags.length > 0) || (summary !== undefined && summary)) {
+    // Manually adding tags/a summary — or resolving a pending item as a shortcut, which by
+    // definition needs neither — means this is no longer "unresolved." Keep status in sync so
+    // the UI doesn't keep showing a stale pending/failed badge over data the user has since
+    // filled in (or a decision they've since made) by hand.
+    if ((newTags !== undefined && newTags.length > 0) || (summary !== undefined && summary) || type === "shortcut") {
       patch.status = "tagged";
     }
 
@@ -303,7 +304,12 @@ export async function bookmarkRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
 
-    await db.update(bookmarks).set({ type: "shortcut" }).where(inArray(bookmarks.id, parsed.data.ids));
+    // A confirmed shortcut is resolved, not "pending" — many arrive here specifically because
+    // import couldn't scrape them, and without this they'd wrongly linger in a pending/review queue.
+    await db
+      .update(bookmarks)
+      .set({ type: "shortcut", status: "tagged" })
+      .where(inArray(bookmarks.id, parsed.data.ids));
     return { updated: parsed.data.ids.length };
   });
 }

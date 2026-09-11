@@ -5,9 +5,12 @@ import { Favicon } from "./Favicon";
 
 interface BookmarkRowProps {
   bookmark: Bookmark;
+  // Shown only in the Pending view — an unresolved item might just be a shortcut import
+  // couldn't scrape, not something that needs tags at all.
+  showResolveActions?: boolean;
 }
 
-export function BookmarkRow({ bookmark }: BookmarkRowProps) {
+export function BookmarkRow({ bookmark, showResolveActions = false }: BookmarkRowProps) {
   const updateMutation = useUpdateBookmark();
   const deleteMutation = useDeleteBookmark();
   const [tagDraft, setTagDraft] = useState("");
@@ -44,6 +47,10 @@ export function BookmarkRow({ bookmark }: BookmarkRowProps) {
     }
   }
 
+  function handleMarkAsShortcut() {
+    updateMutation.mutate({ id: bookmark.id, patch: { type: "shortcut" } });
+  }
+
   return (
     <li className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 flex gap-3">
       <div className="mt-1">
@@ -59,12 +66,19 @@ export function BookmarkRow({ bookmark }: BookmarkRowProps) {
           >
             {bookmark.title}
           </a>
-          <button
-            onClick={handleDelete}
-            className="text-neutral-400 hover:text-red-600 text-xs shrink-0"
-          >
-            Delete
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {showResolveActions && (
+              <button
+                onClick={handleMarkAsShortcut}
+                className="text-violet-600 dark:text-violet-400 hover:text-violet-700 text-xs font-medium whitespace-nowrap"
+              >
+                📦 It's a shortcut
+              </button>
+            )}
+            <button onClick={handleDelete} className="text-neutral-400 hover:text-red-600 text-xs">
+              Delete
+            </button>
+          </div>
         </div>
         <div className="text-xs text-neutral-500 truncate">{bookmark.url}</div>
 
