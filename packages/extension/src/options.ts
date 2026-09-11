@@ -1,4 +1,8 @@
 import browser from "webextension-polyfill";
+import { BUILD_TIME } from "./generated/buildTime.js";
+
+document.getElementById("buildTime")!.textContent =
+  BUILD_TIME === "unbuilt" ? "unbuilt" : `Build: ${new Date(BUILD_TIME).toLocaleString()}`;
 
 type BookmarkTreeNode = Awaited<ReturnType<typeof browser.bookmarks.getTree>>[number];
 

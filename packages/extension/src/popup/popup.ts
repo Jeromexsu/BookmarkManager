@@ -1,6 +1,10 @@
 import browser from "webextension-polyfill";
+import { BUILD_TIME } from "../generated/buildTime.js";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
+
+const buildTimeEl = document.getElementById("buildTime")!;
+buildTimeEl.textContent = BUILD_TIME === "unbuilt" ? "unbuilt" : `built ${new Date(BUILD_TIME).toLocaleTimeString()}`;
 
 const faviconImg = document.getElementById("favicon") as HTMLImageElement;
 const titleInput = document.getElementById("title") as HTMLInputElement;

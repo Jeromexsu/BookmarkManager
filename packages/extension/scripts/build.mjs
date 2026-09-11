@@ -1,5 +1,5 @@
 import { build, context } from "esbuild";
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -10,6 +10,19 @@ const watch = process.argv.includes("--watch");
 
 await rm(outdir, { recursive: true, force: true });
 await mkdir(outdir, { recursive: true });
+
+// Runs on every build, including each incremental rebuild under --watch (esbuild's `define`
+// is fixed at context-creation time, so it can't refresh per rebuild — a source file that's
+// rewritten in onStart and then imported normally does).
+const buildTimePlugin = {
+  name: "build-time",
+  setup(pluginBuild) {
+    pluginBuild.onStart(async () => {
+      const content = `export const BUILD_TIME = ${JSON.stringify(new Date().toISOString())};\n`;
+      await writeFile(join(root, "src/generated/buildTime.ts"), content);
+    });
+  },
+};
 
 const buildOptions = {
   entryPoints: {
@@ -22,6 +35,7 @@ const buildOptions = {
   format: "esm",
   target: "firefox115",
   sourcemap: true,
+  plugins: [buildTimePlugin],
 };
 
 async function copyStatic() {
