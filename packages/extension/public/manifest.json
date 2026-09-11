@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Bookmark Manager",
+  "version": "0.1.0",
+  "description": "Save the current page to your self-hosted, AI-powered Bookmark Manager.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "bookmark-manager@suchuanxj.dev",
+      "strict_min_version": "115.0"
+    }
+  },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "background": {
+    "scripts": ["background.js"],
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Save to Bookmark Manager"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  }
+}

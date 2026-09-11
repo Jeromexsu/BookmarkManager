@@ -1,0 +1,18 @@
+{
+  "name": "@bookmark-manager/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --watch"
+  },
+  "dependencies": {
+    "webextension-polyfill": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/webextension-polyfill": "^0.12.1",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.3"
+  }
+}
