@@ -31,6 +31,19 @@ interface BookmarkSummary {
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
+interface BookmarkConflict {
+  field: "category" | "project" | "summary" | "tags";
+  existingValue: string | string[];
+  newValue: string | string[];
+}
+
+// A field both sides already disagree on (mirrors the server's 409 from POST /bookmarks) —
+// the popup shows these to the user instead of picking one automatically.
+type SaveOutcome =
+  | { status: "saved" }
+  | { status: "conflict"; bookmarkId: number; conflicts: BookmarkConflict[] }
+  | { status: "error"; error: string };
+
 async function getServerUrl(): Promise<string | null> {
   const { serverUrl } = await browser.storage.sync.get("serverUrl");
   return typeof serverUrl === "string" && serverUrl ? serverUrl : null;
@@ -98,16 +111,40 @@ async function listBookmarks(): Promise<Result<BookmarkSummary[]>> {
   return { ok: true, data: data.bookmarks };
 }
 
-async function saveBookmark(payload: BookmarkPayload): Promise<Result<void>> {
+async function saveBookmark(payload: BookmarkPayload): Promise<SaveOutcome> {
   const serverUrl = await getServerUrl();
   if (!serverUrl) {
-    return { ok: false, error: "Set your server URL in the extension settings first." };
+    return { status: "error", error: "Set your server URL in the extension settings first." };
   }
 
   const res = await fetch(`${serverUrl.replace(/\/$/, "")}/api/bookmarks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  });
+
+  if (res.status === 409) {
+    const body = (await res.json()) as { bookmarkId: number; conflicts: BookmarkConflict[] };
+    return { status: "conflict", bookmarkId: body.bookmarkId, conflicts: body.conflicts };
+  }
+  if (!res.ok) {
+    return { status: "error", error: `Server responded with ${res.status}` };
+  }
+  return { status: "saved" };
+}
+
+// Applies the user's per-field choice after a save conflict — "use new" fields only, since
+// "keep existing" needs no request at all.
+async function resolveConflict(bookmarkId: number, patch: Record<string, string | string[]>): Promise<Result<void>> {
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    return { ok: false, error: "Set your server URL in the extension settings first." };
+  }
+
+  const res = await fetch(`${serverUrl.replace(/\/$/, "")}/api/bookmarks/${bookmarkId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
   });
   if (!res.ok) {
     return { ok: false, error: `Server responded with ${res.status}` };
@@ -121,7 +158,8 @@ type IncomingMessage =
   | { type: "LIST_CATEGORIES" }
   | { type: "LIST_PROJECTS" }
   | { type: "LIST_BOOKMARKS" }
-  | { type: "SAVE_BOOKMARK"; payload: BookmarkPayload };
+  | { type: "SAVE_BOOKMARK"; payload: BookmarkPayload }
+  | { type: "RESOLVE_CONFLICT"; payload: { bookmarkId: number; patch: Record<string, string | string[]> } };
 
 browser.runtime.onMessage.addListener((raw: unknown) => {
   const message = raw as IncomingMessage;
@@ -131,4 +169,5 @@ browser.runtime.onMessage.addListener((raw: unknown) => {
   if (message?.type === "LIST_PROJECTS") return fetchNames("projects");
   if (message?.type === "LIST_BOOKMARKS") return listBookmarks();
   if (message?.type === "SAVE_BOOKMARK") return saveBookmark(message.payload);
+  if (message?.type === "RESOLVE_CONFLICT") return resolveConflict(message.payload.bookmarkId, message.payload.patch);
 });

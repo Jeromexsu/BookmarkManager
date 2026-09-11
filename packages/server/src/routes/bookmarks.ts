@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { eq, desc, inArray } from "drizzle-orm";
 import {
   createBookmarkRequestSchema,
@@ -6,6 +6,7 @@ import {
   updateBookmarkRequestSchema,
   confirmShortcutsRequestSchema,
   type Bookmark,
+  type BookmarkConflict,
   type ShortcutCandidate,
 } from "@bookmark-manager/shared";
 import { db } from "../db/client.js";
@@ -126,6 +127,82 @@ async function tagBookmarkAsync(bookmarkId: number, content: string) {
   }
 }
 
+// Saving a URL that's already in the table must not create a second row for it — that just
+// leaves the original (often still-pending) row stranded forever. Instead: fields the existing
+// row doesn't have yet get filled in from the new save; a field both sides already disagree on
+// is reported as a conflict for the caller to resolve (via PATCH) rather than silently picked.
+async function handleExistingBookmark(
+  existingRow: typeof bookmarks.$inferSelect,
+  incoming: { content?: string; favicon?: string; category?: string; project?: string; tags?: string[]; summary?: string },
+  reply: FastifyReply
+) {
+  const [existing] = await hydrateBookmarks([existingRow]);
+  const patch: Partial<typeof bookmarks.$inferInsert> = {};
+  const conflicts: BookmarkConflict[] = [];
+
+  if (incoming.content && !existing.content) patch.content = incoming.content;
+  if (incoming.favicon && !existing.favicon) patch.favicon = incoming.favicon;
+
+  const incomingCategory = incoming.category?.trim() || undefined;
+  if (incomingCategory !== undefined) {
+    if (!existing.category) patch.categoryId = await resolveCategoryId(incomingCategory);
+    else if (existing.category !== incomingCategory) {
+      conflicts.push({ field: "category", existingValue: existing.category, newValue: incomingCategory });
+    }
+  }
+
+  const incomingProject = incoming.project?.trim() || undefined;
+  if (incomingProject !== undefined) {
+    if (!existing.project) patch.projectId = await resolveProjectId(incomingProject);
+    else if (existing.project !== incomingProject) {
+      conflicts.push({ field: "project", existingValue: existing.project, newValue: incomingProject });
+    }
+  }
+
+  const incomingSummary = incoming.summary?.trim() || undefined;
+  if (incomingSummary !== undefined) {
+    if (!existing.summary) patch.summary = incomingSummary;
+    else if (existing.summary !== incomingSummary) {
+      conflicts.push({ field: "summary", existingValue: existing.summary, newValue: incomingSummary });
+    }
+  }
+
+  const incomingTags = incoming.tags && incoming.tags.length > 0 ? incoming.tags : undefined;
+  let tagsToLink: string[] | undefined;
+  if (incomingTags !== undefined) {
+    if (existing.tags.length === 0) {
+      tagsToLink = incomingTags;
+    } else {
+      const sameSet =
+        existing.tags.length === incomingTags.length && existing.tags.every((t) => incomingTags.includes(t));
+      if (!sameSet) conflicts.push({ field: "tags", existingValue: existing.tags, newValue: incomingTags });
+    }
+  }
+
+  // Enough real data now exists to stop calling this "unresolved" — even if some other field
+  // is still stuck in conflicts, since that's an independent, later decision.
+  const finalTagCount = tagsToLink ? tagsToLink.length : existing.tags.length;
+  const finalSummary = patch.summary ?? existing.summary;
+  if (existing.status !== "tagged" && (finalTagCount > 0 || finalSummary)) {
+    patch.status = "tagged";
+  }
+
+  let row = existingRow;
+  if (Object.keys(patch).length > 0) {
+    [row] = await db.update(bookmarks).set(patch).where(eq(bookmarks.id, existingRow.id)).returning();
+  }
+  if (tagsToLink) {
+    await linkTags(row.id, tagsToLink);
+  }
+
+  if (conflicts.length > 0) {
+    return reply.code(409).send({ error: "conflict" as const, bookmarkId: row.id, conflicts });
+  }
+
+  const [bookmark] = await hydrateBookmarks([row]);
+  return reply.code(200).send(bookmark);
+}
+
 export async function bookmarkRoutes(app: FastifyInstance) {
   app.get("/bookmarks", async () => {
     const rows = await db.select().from(bookmarks).orderBy(desc(bookmarks.createdAt));
@@ -156,6 +233,11 @@ export async function bookmarkRoutes(app: FastifyInstance) {
     }
 
     const { url, title, content, favicon, category, project, tags: confirmedTags, summary } = parsed.data;
+
+    const [existingRow] = await db.select().from(bookmarks).where(eq(bookmarks.url, url));
+    if (existingRow) {
+      return handleExistingBookmark(existingRow, { content, favicon, category, project, tags: confirmedTags, summary }, reply);
+    }
 
     const categoryId = category ? await resolveCategoryId(category) : null;
     const projectId = project ? await resolveProjectId(project) : null;

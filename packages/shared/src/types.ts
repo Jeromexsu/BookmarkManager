@@ -41,6 +41,27 @@ export const createBookmarkRequestSchema = z.object({
 });
 export type CreateBookmarkRequest = z.infer<typeof createBookmarkRequestSchema>;
 
+// POST /bookmarks on a URL that already exists merges instead of duplicating: fields the
+// existing row doesn't have yet are filled in silently, but a field both sides disagree on
+// (existing has a value, the new save has a different one) is reported here instead of picked
+// automatically — the caller decides, then resolves via PATCH /bookmarks/:id.
+export const bookmarkConflictFieldSchema = z.enum(["category", "project", "summary", "tags"]);
+export type BookmarkConflictField = z.infer<typeof bookmarkConflictFieldSchema>;
+
+export const bookmarkConflictSchema = z.object({
+  field: bookmarkConflictFieldSchema,
+  existingValue: z.union([z.string(), z.array(z.string())]),
+  newValue: z.union([z.string(), z.array(z.string())]),
+});
+export type BookmarkConflict = z.infer<typeof bookmarkConflictSchema>;
+
+export const createBookmarkConflictResponseSchema = z.object({
+  error: z.literal("conflict"),
+  bookmarkId: z.number(),
+  conflicts: z.array(bookmarkConflictSchema),
+});
+export type CreateBookmarkConflictResponse = z.infer<typeof createBookmarkConflictResponseSchema>;
+
 export const listBookmarksResponseSchema = z.object({
   bookmarks: z.array(bookmarkSchema),
 });

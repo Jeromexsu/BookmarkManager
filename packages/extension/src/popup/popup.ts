@@ -3,6 +3,17 @@ import { BUILD_TIME } from "../generated/buildTime.js";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
+interface BookmarkConflict {
+  field: "category" | "project" | "summary" | "tags";
+  existingValue: string | string[];
+  newValue: string | string[];
+}
+
+type SaveOutcome =
+  | { status: "saved" }
+  | { status: "conflict"; bookmarkId: number; conflicts: BookmarkConflict[] }
+  | { status: "error"; error: string };
+
 const buildTimeEl = document.getElementById("buildTime")!;
 buildTimeEl.textContent = BUILD_TIME === "unbuilt" ? "unbuilt" : `built ${new Date(BUILD_TIME).toLocaleTimeString()}`;
 
@@ -31,6 +42,11 @@ const bookmarkTree = document.getElementById("bookmarkTree") as HTMLDivElement;
 const browseEmpty = document.getElementById("browseEmpty") as HTMLParagraphElement;
 const groupByCategoryBtn = document.getElementById("groupByCategory") as HTMLButtonElement;
 const groupByProjectBtn = document.getElementById("groupByProject") as HTMLButtonElement;
+
+const conflictView = document.getElementById("conflictView") as HTMLDivElement;
+const conflictList = document.getElementById("conflictList") as HTMLDivElement;
+const conflictApplyBtn = document.getElementById("conflictApply") as HTMLButtonElement;
+const conflictCancelBtn = document.getElementById("conflictCancel") as HTMLButtonElement;
 
 const allFields = [titleInput, urlInput, contentInput, categoryInput, projectInput, tagInput, summaryInput];
 
@@ -407,6 +423,126 @@ autoTagBtn.addEventListener("click", async () => {
   setStatus("Tags generated.", "success");
 });
 
+let pendingConflictBookmarkId: number | null = null;
+let currentConflicts: BookmarkConflict[] = [];
+let conflictChoices = new Map<string, "existing" | "new">();
+
+const conflictFieldLabels: Record<BookmarkConflict["field"], string> = {
+  category: "Category",
+  project: "Project",
+  summary: "Summary",
+  tags: "Tags",
+};
+
+function formatConflictValue(value: string | string[]): string {
+  return Array.isArray(value) ? value.join(", ") : value;
+}
+
+function renderConflicts() {
+  conflictList.innerHTML = "";
+  for (const conflict of currentConflicts) {
+    const row = document.createElement("div");
+    row.className = "conflict-row";
+
+    const label = document.createElement("div");
+    label.className = "conflict-label";
+    label.textContent = conflictFieldLabels[conflict.field];
+    row.appendChild(label);
+
+    const options = document.createElement("div");
+    options.className = "conflict-options";
+
+    const existingBtn = document.createElement("button");
+    existingBtn.type = "button";
+    existingBtn.className = "conflict-option";
+    existingBtn.textContent = `Keep: ${formatConflictValue(conflict.existingValue)}`;
+
+    const newBtn = document.createElement("button");
+    newBtn.type = "button";
+    newBtn.className = "conflict-option";
+    newBtn.textContent = `Use new: ${formatConflictValue(conflict.newValue)}`;
+
+    function refreshSelected() {
+      const choice = conflictChoices.get(conflict.field);
+      existingBtn.classList.toggle("selected", choice === "existing");
+      newBtn.classList.toggle("selected", choice === "new");
+    }
+
+    existingBtn.addEventListener("click", () => {
+      conflictChoices.set(conflict.field, "existing");
+      refreshSelected();
+    });
+    newBtn.addEventListener("click", () => {
+      conflictChoices.set(conflict.field, "new");
+      refreshSelected();
+    });
+
+    refreshSelected();
+    options.appendChild(existingBtn);
+    options.appendChild(newBtn);
+    row.appendChild(options);
+    conflictList.appendChild(row);
+  }
+}
+
+function showConflicts(bookmarkId: number, conflicts: BookmarkConflict[]) {
+  pendingConflictBookmarkId = bookmarkId;
+  currentConflicts = conflicts;
+  // Default every field to "keep existing" until the user actively picks the new value.
+  conflictChoices = new Map(conflicts.map((c) => [c.field, "existing"]));
+  renderConflicts();
+  conflictView.hidden = false;
+}
+
+function hideConflicts() {
+  conflictView.hidden = true;
+  pendingConflictBookmarkId = null;
+  currentConflicts = [];
+}
+
+conflictCancelBtn.addEventListener("click", () => {
+  hideConflicts();
+  setStatus("Kept the existing values.", "success");
+});
+
+conflictApplyBtn.addEventListener("click", async () => {
+  if (pendingConflictBookmarkId === null) return;
+
+  const patch: Record<string, string | string[]> = {};
+  for (const conflict of currentConflicts) {
+    if (conflictChoices.get(conflict.field) === "new") {
+      patch[conflict.field] = conflict.newValue;
+    }
+  }
+
+  if (Object.keys(patch).length === 0) {
+    hideConflicts();
+    setStatus("Kept the existing values.", "success");
+    return;
+  }
+
+  setStatus("Applying your choices…");
+  conflictApplyBtn.disabled = true;
+  conflictCancelBtn.disabled = true;
+
+  const result = (await browser.runtime.sendMessage({
+    type: "RESOLVE_CONFLICT",
+    payload: { bookmarkId: pendingConflictBookmarkId, patch },
+  })) as Result<void> | undefined;
+
+  conflictApplyBtn.disabled = false;
+  conflictCancelBtn.disabled = false;
+
+  if (!result?.ok) {
+    setStatus(result?.error ?? "Failed to apply your choices.", "error");
+    return;
+  }
+
+  hideConflicts();
+  allBookmarks = null;
+  setStatus("Saved!", "success");
+});
+
 saveBtn.addEventListener("click", async () => {
   if (!urlInput.value || !titleInput.value) {
     setStatus("URL and title are required.", "error");
@@ -414,6 +550,7 @@ saveBtn.addEventListener("click", async () => {
   }
 
   addTagFromInput();
+  hideConflicts();
   setBusy(true);
   setStatus("Saving…");
 
@@ -429,12 +566,18 @@ saveBtn.addEventListener("click", async () => {
       project: projectInput.value.trim(),
       summary: summaryInput.value.trim(),
     },
-  })) as Result<void> | undefined;
+  })) as SaveOutcome | undefined;
 
   setBusy(false);
 
-  if (!result?.ok) {
+  if (!result || result.status === "error") {
     setStatus(result?.error ?? "Failed to save.", "error");
+    return;
+  }
+
+  if (result.status === "conflict") {
+    setStatus("This bookmark already exists with different values — pick which to keep below.", "info");
+    showConflicts(result.bookmarkId, result.conflicts);
     return;
   }
 
