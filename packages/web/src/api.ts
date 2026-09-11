@@ -4,11 +4,13 @@ import {
   type ShortcutCandidate,
   type CategorySuggestion,
   type SuggestCategoriesScope,
+  type RenameCategoryResponse,
   listBookmarksResponseSchema,
   bookmarkSchema,
   nameListResponseSchema,
   detectShortcutsResponseSchema,
   suggestCategoriesResponseSchema,
+  renameCategoryResponseSchema,
 } from "@bookmark-manager/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -74,6 +76,25 @@ async function applyCategories(assignments: { id: number; category: string }[]):
   if (!res.ok) throw new Error(`Failed to apply categories: ${res.status}`);
 }
 
+async function renameCategory(from: string, to: string): Promise<RenameCategoryResponse> {
+  const res = await fetch("/api/categories", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ from, to }),
+  });
+  if (!res.ok) throw new Error(`Failed to rename category: ${res.status}`);
+  return renameCategoryResponseSchema.parse(await res.json());
+}
+
+async function deleteCategory(name: string): Promise<void> {
+  const res = await fetch("/api/categories", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`Failed to delete category: ${res.status}`);
+}
+
 const bookmarksKey = ["bookmarks"] as const;
 
 export function useBookmarks() {
@@ -133,6 +154,28 @@ export function useApplyCategories() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: applyCategories,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: bookmarksKey });
+      queryClient.invalidateQueries({ queryKey: ["categories"] });
+    },
+  });
+}
+
+export function useRenameCategory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ from, to }: { from: string; to: string }) => renameCategory(from, to),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: bookmarksKey });
+      queryClient.invalidateQueries({ queryKey: ["categories"] });
+    },
+  });
+}
+
+export function useDeleteCategory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: deleteCategory,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: bookmarksKey });
       queryClient.invalidateQueries({ queryKey: ["categories"] });

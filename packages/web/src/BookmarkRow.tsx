@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ChangeEvent } from "react";
 import type { Bookmark } from "@bookmark-manager/shared";
 import { useDeleteBookmark, useUpdateBookmark } from "./api";
 import { Favicon } from "./Favicon";
@@ -8,9 +8,12 @@ interface BookmarkRowProps {
   // Shown only in the Pending view — an unresolved item might just be a shortcut import
   // couldn't scrape, not something that needs tags at all.
   showResolveActions?: boolean;
+  // Shown only in the Category view — every OTHER existing category, for a one-click move
+  // (distinct from the free-text category field, which is for typing/creating one).
+  moveToCategories?: string[];
 }
 
-export function BookmarkRow({ bookmark, showResolveActions = false }: BookmarkRowProps) {
+export function BookmarkRow({ bookmark, showResolveActions = false, moveToCategories }: BookmarkRowProps) {
   const updateMutation = useUpdateBookmark();
   const deleteMutation = useDeleteBookmark();
   const [tagDraft, setTagDraft] = useState("");
@@ -49,6 +52,15 @@ export function BookmarkRow({ bookmark, showResolveActions = false }: BookmarkRo
 
   function handleMarkAsShortcut() {
     updateMutation.mutate({ id: bookmark.id, patch: { type: "shortcut" } });
+  }
+
+  function handleMoveTo(e: ChangeEvent<HTMLSelectElement>) {
+    const target = e.target.value;
+    e.target.value = ""; // reset to the placeholder — this is a one-shot action, not a field
+    if (target) {
+      setCategoryDraft(target);
+      updateMutation.mutate({ id: bookmark.id, patch: { category: target } });
+    }
   }
 
   // Explicit resolve for the "this is fine as-is, no tags needed" case — adding tags/a summary
@@ -112,6 +124,23 @@ export function BookmarkRow({ bookmark, showResolveActions = false }: BookmarkRo
             placeholder="Category"
             className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300 outline-none w-24 placeholder:text-amber-400"
           />
+          {moveToCategories && moveToCategories.length > 0 && (
+            <select
+              onChange={handleMoveTo}
+              defaultValue=""
+              title="Move to a different category"
+              className="text-xs px-1.5 py-0.5 rounded-full border border-neutral-200 dark:border-neutral-700 bg-transparent text-neutral-500 outline-none"
+            >
+              <option value="" disabled>
+                Move to…
+              </option>
+              {moveToCategories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          )}
           <input
             list="project-options"
             value={projectDraft}

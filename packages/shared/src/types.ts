@@ -191,3 +191,23 @@ export const applyCategoriesRequestSchema = z.object({
   assignments: z.array(z.object({ id: z.number(), category: z.string().min(1) })).min(1),
 });
 export type ApplyCategoriesRequest = z.infer<typeof applyCategoriesRequestSchema>;
+
+// Categories are addressed by name from the client (it never sees category ids) — renaming to
+// a name that already belongs to a different category merges into it rather than erroring,
+// since that's the natural reading of "rename this category to an existing one."
+export const renameCategoryRequestSchema = z.object({
+  from: z.string().min(1),
+  to: z.string().min(1),
+});
+export type RenameCategoryRequest = z.infer<typeof renameCategoryRequestSchema>;
+
+export const renameCategoryResponseSchema = z.object({
+  name: z.string(),
+  merged: z.boolean(),
+});
+export type RenameCategoryResponse = z.infer<typeof renameCategoryResponseSchema>;
+
+export const deleteCategoryRequestSchema = z.object({
+  name: z.string().min(1),
+});
+export type DeleteCategoryRequest = z.infer<typeof deleteCategoryRequestSchema>;

@@ -6,11 +6,12 @@ import { CategorySuggestions } from "./CategorySuggestions";
 
 interface ReferenceViewProps {
   bookmarks: Bookmark[];
+  categories: string[];
 }
 
 type SubView = "category" | "project" | "all";
 
-export function ReferenceView({ bookmarks }: ReferenceViewProps) {
+export function ReferenceView({ bookmarks, categories }: ReferenceViewProps) {
   const [subView, setSubView] = useState<SubView>("category");
   const [query, setQuery] = useState("");
 
@@ -58,7 +59,7 @@ export function ReferenceView({ bookmarks }: ReferenceViewProps) {
       {subView === "all" ? (
         <BookmarkList bookmarks={filtered} />
       ) : (
-        <GroupedCardView bookmarks={filtered} mode={subView} autoExpand={query.trim() !== ""} />
+        <GroupedCardView bookmarks={filtered} mode={subView} autoExpand={query.trim() !== ""} categories={categories} />
       )}
     </div>
   );

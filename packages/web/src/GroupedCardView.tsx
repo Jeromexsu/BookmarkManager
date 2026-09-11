@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Bookmark } from "@bookmark-manager/shared";
 import { BookmarkRow } from "./BookmarkRow";
+import { useDeleteCategory, useRenameCategory } from "./api";
 
 export type GroupMode = "category" | "project";
 
@@ -10,6 +11,9 @@ interface GroupedCardViewProps {
   // While searching, every group with a match should just be visible — the user shouldn't
   // have to expand each one by hand to see what matched.
   autoExpand?: boolean;
+  // Full category name list (unaffected by search/grouping) — used for the per-bookmark
+  // "Move to" dropdown and to know what a rename would collide/merge with. Category mode only.
+  categories?: string[];
 }
 
 // Category groups every bookmark (with an "Uncategorized" bucket); project only counts
@@ -27,8 +31,12 @@ function buildGroups(bookmarks: Bookmark[], mode: GroupMode): Map<string, Bookma
   return groups;
 }
 
-export function GroupedCardView({ bookmarks, mode, autoExpand = false }: GroupedCardViewProps) {
+export function GroupedCardView({ bookmarks, mode, autoExpand = false, categories }: GroupedCardViewProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [renamingKey, setRenamingKey] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const renameMutation = useRenameCategory();
+  const deleteMutation = useDeleteCategory();
 
   const groups = buildGroups(bookmarks, mode);
   const sortedKeys = [...groups.keys()].sort((a, b) => {
@@ -46,6 +54,25 @@ export function GroupedCardView({ bookmarks, mode, autoExpand = false }: Grouped
     });
   }
 
+  function startRename(key: string) {
+    setRenamingKey(key);
+    setRenameDraft(key);
+  }
+
+  function commitRename(key: string) {
+    const to = renameDraft.trim();
+    setRenamingKey(null);
+    if (to && to !== key) {
+      renameMutation.mutate({ from: key, to });
+    }
+  }
+
+  function handleDeleteCategory(key: string, count: number) {
+    if (confirm(`Remove category "${key}"? Its ${count} bookmark${count === 1 ? "" : "s"} will become Uncategorized.`)) {
+      deleteMutation.mutate(key);
+    }
+  }
+
   if (sortedKeys.length === 0) {
     return (
       <p className="text-sm text-neutral-400 text-center py-12">
@@ -59,22 +86,60 @@ export function GroupedCardView({ bookmarks, mode, autoExpand = false }: Grouped
       {sortedKeys.map((key) => {
         const items = groups.get(key)!;
         const isOpen = autoExpand || expanded.has(key);
+        const isManageable = mode === "category" && key !== "Uncategorized";
+        const isRenaming = renamingKey === key;
+        const moveToCategories = categories?.filter((c) => c !== key) ?? [];
+
         return (
           <div key={key}>
-            <button
-              onClick={() => toggle(key)}
-              className="w-full flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-900 text-left"
-            >
-              <span className={`text-xs text-neutral-400 transition-transform inline-block ${isOpen ? "rotate-90" : ""}`}>
-                ▸
-              </span>
-              <span className="font-semibold text-sm">{key}</span>
-              <span className="text-xs text-neutral-400 ml-auto">{items.length}</span>
-            </button>
+            <div className="w-full flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-900">
+              <button
+                onClick={() => toggle(key)}
+                className="flex items-center gap-2 flex-1 min-w-0 text-left"
+              >
+                <span className={`text-xs text-neutral-400 transition-transform inline-block ${isOpen ? "rotate-90" : ""}`}>
+                  ▸
+                </span>
+                {isRenaming ? (
+                  <input
+                    autoFocus
+                    value={renameDraft}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitRename(key);
+                      if (e.key === "Escape") setRenamingKey(null);
+                    }}
+                    onBlur={() => commitRename(key)}
+                    className="font-semibold text-sm px-1.5 py-0.5 rounded border border-blue-400 outline-none bg-white dark:bg-neutral-950"
+                  />
+                ) : (
+                  <span className="font-semibold text-sm truncate">{key}</span>
+                )}
+                <span className="text-xs text-neutral-400">{items.length}</span>
+              </button>
+
+              {isManageable && !isRenaming && (
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => startRename(key)}
+                    className="text-xs px-2 py-1 rounded-md text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                  >
+                    Rename
+                  </button>
+                  <button
+                    onClick={() => handleDeleteCategory(key, items.length)}
+                    className="text-xs px-2 py-1 rounded-md text-neutral-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
             {isOpen && (
               <ul className="space-y-2 pl-6 pb-3">
                 {items.map((b) => (
-                  <BookmarkRow key={b.id} bookmark={b} />
+                  <BookmarkRow key={b.id} bookmark={b} moveToCategories={mode === "category" ? moveToCategories : undefined} />
                 ))}
               </ul>
             )}

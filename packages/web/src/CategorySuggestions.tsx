@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CategorySuggestion, SuggestCategoriesScope } from "@bookmark-manager/shared";
 import { useApplyCategories, useSuggestCategories } from "./api";
 
@@ -16,6 +16,19 @@ export function CategorySuggestions({ bookmarkTitleById }: CategorySuggestionsPr
   const [suggestions, setSuggestions] = useState<CategorySuggestion[] | null>(null);
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  // Large batches can legitimately take 30-90s against the model with no intermediate
+  // progress — a ticking counter is the difference between "still working" and "looks hung".
+  useEffect(() => {
+    if (!suggestMutation.isPending) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const start = Date.now();
+    const interval = setInterval(() => setElapsedSeconds(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => clearInterval(interval);
+  }, [suggestMutation.isPending]);
 
   async function handleSuggest() {
     const result = await suggestMutation.mutateAsync(scope);
@@ -67,9 +80,12 @@ export function CategorySuggestions({ bookmarkTitleById }: CategorySuggestionsPr
           disabled={suggestMutation.isPending}
           className="px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 text-sm font-medium hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-50"
         >
-          {suggestMutation.isPending ? "Suggesting…" : "Suggest categories"}
+          {suggestMutation.isPending ? `Suggesting… ${elapsedSeconds}s` : "Suggest categories"}
         </button>
 
+        {suggestMutation.isPending && (
+          <p className="text-xs text-neutral-400">Large batches can take up to a minute or two — it's working, not stuck.</p>
+        )}
         {suggestMutation.isError && <p className="text-xs text-red-600">Couldn't get suggestions.</p>}
       </div>
     );
