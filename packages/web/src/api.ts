@@ -1,6 +1,5 @@
 import {
   type Bookmark,
-  type CreateBookmarkRequest,
   type UpdateBookmarkRequest,
   type ShortcutCandidate,
   listBookmarksResponseSchema,
@@ -15,16 +14,6 @@ async function listBookmarks(): Promise<Bookmark[]> {
   if (!res.ok) throw new Error(`Failed to load bookmarks: ${res.status}`);
   const data = listBookmarksResponseSchema.parse(await res.json());
   return data.bookmarks;
-}
-
-async function createBookmark(input: CreateBookmarkRequest): Promise<Bookmark> {
-  const res = await fetch("/api/bookmarks", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) throw new Error(`Failed to create bookmark: ${res.status}`);
-  return bookmarkSchema.parse(await res.json());
 }
 
 async function updateBookmark(id: number, patch: UpdateBookmarkRequest): Promise<Bookmark> {
@@ -80,14 +69,6 @@ export function useCategories() {
 
 export function useProjects() {
   return useQuery({ queryKey: ["projects"], queryFn: () => listNames("projects") });
-}
-
-export function useCreateBookmark() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: createBookmark,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: bookmarksKey }),
-  });
 }
 
 export function useUpdateBookmark() {

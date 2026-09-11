@@ -7,6 +7,9 @@ export type GroupMode = "category" | "project";
 interface GroupedCardViewProps {
   bookmarks: Bookmark[];
   mode: GroupMode;
+  // While searching, every group with a match should just be visible — the user shouldn't
+  // have to expand each one by hand to see what matched.
+  autoExpand?: boolean;
 }
 
 // Category groups every bookmark (with an "Uncategorized" bucket); project only counts
@@ -24,7 +27,7 @@ function buildGroups(bookmarks: Bookmark[], mode: GroupMode): Map<string, Bookma
   return groups;
 }
 
-export function GroupedCardView({ bookmarks, mode }: GroupedCardViewProps) {
+export function GroupedCardView({ bookmarks, mode, autoExpand = false }: GroupedCardViewProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const groups = buildGroups(bookmarks, mode);
@@ -55,7 +58,7 @@ export function GroupedCardView({ bookmarks, mode }: GroupedCardViewProps) {
     <div className="space-y-1">
       {sortedKeys.map((key) => {
         const items = groups.get(key)!;
-        const isOpen = expanded.has(key);
+        const isOpen = autoExpand || expanded.has(key);
         return (
           <div key={key}>
             <button
@@ -65,9 +68,7 @@ export function GroupedCardView({ bookmarks, mode }: GroupedCardViewProps) {
               <span className={`text-xs text-neutral-400 transition-transform inline-block ${isOpen ? "rotate-90" : ""}`}>
                 ▸
               </span>
-              <span className="font-semibold text-sm">
-                {mode === "project" ? "📦" : "📁"} {key}
-              </span>
+              <span className="font-semibold text-sm">{key}</span>
               <span className="text-xs text-neutral-400 ml-auto">{items.length}</span>
             </button>
             {isOpen && (
