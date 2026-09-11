@@ -222,6 +222,13 @@ export async function bookmarkRoutes(app: FastifyInstance) {
     if (project !== undefined) patch.projectId = project ? await resolveProjectId(project) : null;
     if (type !== undefined) patch.type = type;
 
+    // Manually adding tags/a summary means this is no longer meaningfully "untagged" — keep
+    // status in sync so the UI doesn't keep showing a stale pending/failed badge over data
+    // the user has since filled in by hand.
+    if ((newTags !== undefined && newTags.length > 0) || (summary !== undefined && summary)) {
+      patch.status = "tagged";
+    }
+
     // Drizzle/Postgres reject an UPDATE with an empty SET clause — a patch that only touches
     // tags (handled separately below) would otherwise leave `patch` empty.
     const [row] =

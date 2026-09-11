@@ -68,8 +68,14 @@ export function BookmarkRow({ bookmark }: BookmarkRowProps) {
         </div>
         <div className="text-xs text-neutral-500 truncate">{bookmark.url}</div>
 
-        {bookmark.status === "pending" && <div className="text-xs text-amber-600 mt-1">Untagged</div>}
-        {bookmark.status === "failed" && <div className="text-xs text-red-600 mt-1">Tagging failed</div>}
+        {/* status is only meaningful until the user has actually added tags/a summary by hand —
+            trusting it blindly would keep showing a stale badge over data they've since filled in. */}
+        {bookmark.status === "pending" && bookmark.tags.length === 0 && !bookmark.summary && (
+          <div className="text-xs text-amber-600 mt-1">Untagged</div>
+        )}
+        {bookmark.status === "failed" && bookmark.tags.length === 0 && !bookmark.summary && (
+          <div className="text-xs text-red-600 mt-1">Tagging failed</div>
+        )}
         {bookmark.summary && <p className="text-sm mt-1.5 text-neutral-700 dark:text-neutral-300">{bookmark.summary}</p>}
 
         <div className="flex flex-wrap items-center gap-1.5 mt-2">
