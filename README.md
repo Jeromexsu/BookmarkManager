@@ -1,10 +1,15 @@
 # Bookmark Manager
 
 A browser-independent, AI-powered bookmark manager. The core lives in a self-hosted
-server + web app, not in any browser's native bookmark store — browser extensions are
-thin, dumb senders that hand the current page to your server. Point Firefox, Chrome, or
-anything else at the same server and you get the same bookmarks, the same tags, the
-same search.
+server + web app, not in any browser's native bookmark store. A Firefox extension
+handles collection (saving, bulk import); the web app is the real management surface
+(browse, search, edit, organize). Point the extension at your own server and you get
+the same bookmarks, the same tags, the same search, regardless of which browser you're
+in that day.
+
+**This file is a handover doc as much as a README** — it captures not just what exists
+but *why*, so a fresh session (or a fresh you) can pick this up without re-deriving
+decisions that were already made deliberately.
 
 ## Why
 
@@ -12,53 +17,109 @@ Native browser bookmarks are dumb (a URL and a title), siloed to one browser, an
 un-searchable beyond exact string match. This project fixes that by:
 
 1. Making the bookmark store independent of any single browser.
-2. Using an LLM to actually understand what you saved — tags, category, and a summary
-   are generated automatically instead of you filing things into folders by hand.
-3. Eventually letting you search bookmarks by *meaning* ("that article about rust
+2. Using an LLM to actually understand what you saved — tags and a summary are
+   generated automatically instead of you filing things into folders by hand.
+3. Recognizing that not everything you bookmark *is* content — a browser-independent
+   manager needs to handle "shortcuts" (google.com, github.com's homepage) differently
+   from "references" (an article, docs, a specific post).
+4. Eventually letting you search bookmarks by *meaning* ("that article about rust
    async") rather than by exact keyword.
 
 ## Architecture
 
 ```
- ┌────────────┐   save page    ┌─────────────┐   tag via DeepSeek   ┌────────────┐
- │  Extension │ ─────────────► │   Server    │ ───────────────────► │  Postgres  │
- │ (Firefox,  │   POST /api/   │  (Fastify)  │                       │ +pgvector  │
- │  Chrome…)  │   bookmarks    │             │ ◄──────────────────  │            │
- └────────────┘                └──────┬──────┘   read/write          └────────────┘
-                                       │
-                                       │ serves API + static build
-                                       ▼
-                                 ┌────────────┐
-                                 │  Web app   │  (React) — browse, search, manage
-                                 └────────────┘
+ ┌────────────┐  save / import  ┌─────────────┐   tag via DeepSeek   ┌────────────┐
+ │  Extension │ ──────────────► │   Server    │ ───────────────────► │  Postgres  │
+ │ (Firefox)  │  POST /api/...  │  (Fastify)  │                       │ +pgvector  │
+ │            │ ◄────────────── │             │ ◄──────────────────  │            │
+ └────────────┘  preview/confirm└──────┬──────┘   read/write          └────────────┘
+                                        │
+                                        │ serves API + static build
+                                        ▼
+                                  ┌────────────┐
+                                  │  Web app   │  (React) — the real management UI
+                                  └────────────┘
 ```
 
-- **Extensions are intentionally dumb.** All they do is grab the active tab's URL,
-  title, and rendered text (so login-gated pages and SPAs still capture correctly) and
-  POST it to your server. No tagging logic, no storage, nothing browser-specific beyond
-  that capture step.
-- **The server is the only source of truth.** It stores bookmarks, calls the LLM for
-  tagging, and serves both the JSON API and the built web app as static files — one
-  deployable unit.
-- **Everything is dockerized from day one**, so the exact stack you run locally
-  (`docker compose up`) is what you deploy to a VPS.
+- **The extension is the collection tool, not just a dumb sender.** It captures a
+  page (title/URL/rendered text, so login-gated pages and SPAs work), previews
+  AI-generated tags/summary, and — critically — **never saves without the user seeing
+  the result first**. This preview-then-confirm principle shows up again later
+  (shortcut detection works the same way). It also has a lightweight read-only Browse
+  tab and a bulk "import from this browser's bookmarks" flow, but *editing/organizing*
+  bookmarks is deliberately not built into the extension — that's the web app's job.
+- **The server is the only source of truth.** Stores bookmarks, calls the LLM, serves
+  the JSON API and the built web app as static files — one deployable unit.
+- **The web app is where bookmarks actually get managed**: search, categorize, tag,
+  delete, review anything the AI pipeline couldn't resolve on its own.
+- **Dockerized for deployment**, not necessarily for local dev — see
+  [Environment & infra decisions](#environment--infra-decisions) below, this one's
+  important.
 
-## AI Roadmap
+## Data model
 
-Built in this order, each step layering on the last:
+Every bookmark has three largely-independent classification axes, and getting this
+distinction right shaped a lot of the later design:
 
-1. ✅ **Auto-tagging & categorization** (in progress) — when a bookmark is saved with
-   page content, DeepSeek returns `{ tags, category, summary }`, stored against the
-   bookmark. See [`ai/tagging.ts`](packages/server/src/ai/tagging.ts).
-2. ⏳ **Semantic search** — search bookmarks by meaning via embeddings + pgvector.
-   Deliberately **not implemented yet**: which embedding model to use (local, e.g.
-   transformers.js, vs. a hosted API) is still an open decision. The schema already has
-   a `bookmark_embeddings` table with a `vector` column, and
-   [`ai/embeddings.ts`](packages/server/src/ai/embeddings.ts) defines the
-   `EmbeddingProvider` interface so wiring in a real provider later is a one-file
-   change — nothing else needs to move.
-3. ⏳ **Duplicate / stale detection** — once embeddings exist, use them (plus dead-link
-   checks) to surface duplicate or low-value bookmarks for cleanup.
+- **`type`: `"reference"` vs `"shortcut"`.** Reference = has real content worth
+  reading/tagging (an article, docs, a post). Shortcut = a pure entrance/portal page
+  (a homepage, a search engine, a tool's landing page) — nothing to summarize, just a
+  launcher. Detected via a cheap URL heuristic (bare domain root) plus an LLM content
+  check for ambiguous cases, always **proposed then confirmed** by the user, never
+  auto-applied. See [`ai/classify.ts`](packages/server/src/ai/classify.ts) and the
+  `detect-shortcuts` / `confirm-shortcuts` routes.
+- **`category` / `project`: always user-only, never AI-generated.** `category` is a
+  broad grouping (coding/lifestyle/travel); `project` bundles deep-coupled bookmarks
+  together. Both are free-text with "pick existing or type a new one" affordances
+  (`GET /api/categories`, `/api/projects`), backed by their own small tables — same
+  upsert-by-name pattern as `tags`.
+- **`tags`: AI-generated by default, user-editable always.** The one thing DeepSeek is
+  actually trusted to originate, via [`ai/tagging.ts`](packages/server/src/ai/tagging.ts).
+- **`status`: `"pending"` / `"tagged"` / `"failed"` — this is a *resolution* state, not
+  a display label.** A real bug (found live, fixed) taught us this needs to stay in
+  sync with actual data: a bookmark with tags/a summary added by hand must not keep
+  showing "Untagged" just because the DB's `status` column was never updated by that
+  manual edit. `status` now gets updated by *any* path that resolves a bookmark — AI
+  tagging succeeding, a manual tag/summary edit, or confirming something as a shortcut
+  (which needs no tags by definition, but still counts as "resolved").
+
+**The web app's three top-level views are a strict partition on this model, not just a
+filter convenience:**
+- **References** = `type: "reference"` AND `status: "tagged"` (resolved content)
+- **Shortcuts** = `type: "shortcut"` (resolution implies `status: "tagged"` too, see above)
+- **Pending** = `status != "tagged"`, regardless of type — mostly from bulk import
+  failing to scrape a page, meaning the system genuinely doesn't know yet whether it's
+  a reference or a shortcut. Each pending row gets the same inline editing as
+  everywhere else, plus a one-click "It's a shortcut" action.
+
+These three should sum to the total bookmark count with zero overlap. If they don't,
+something upstream isn't setting `status`/`type` correctly on resolution — check
+whatever new code path might be creating or resolving bookmarks first.
+
+## AI features
+
+1. ✅ **Auto-tagging** — DeepSeek (`deepseek-flash` — not `deepseek-chat`, which was
+   deprecated 2026-07-24) returns `{ tags, summary, meaningful }` from page content.
+   `meaningful` catches boilerplate that's merely long enough to look substantial
+   (cookie walls, bot-check interstitials, paywalls) — same LLM call, no extra cost.
+   Defaults `true` since the model occasionally omits the field.
+2. ✅ **Shortcut detection** — see Data model above.
+3. ✅ **Bulk import** — `POST /api/import` runs as a background job (concurrency-
+   limited fetches, no re-scraping of already-known URLs, dead links and duplicates
+   correctly separated from "alive but couldn't scrape"). See
+   [`routes/import.ts`](packages/server/src/routes/import.ts).
+4. ⏳ **Semantic search** — **still not implemented; the embedding provider decision is
+   still open.** The schema has a `bookmark_embeddings` table with a placeholder
+   `vector(1536)` column (will need a migration once a real provider/dimension is
+   chosen), and [`ai/embeddings.ts`](packages/server/src/ai/embeddings.ts) defines an
+   `EmbeddingProvider` interface so wiring one in is a one-file change. This has not
+   moved since the very start of the project — if picking this up, start here.
+5. ⏳ **True duplicate detection** — exact-URL duplicates exist in the live dataset
+   (confirmed while testing; a few were fixed by hand). There's no systematic tool for
+   this yet beyond the import pipeline's URL-based dedup (which only prevents *new*
+   duplicates from bulk import, not existing ones). A real feature here would need to
+   decide fuzzy vs. exact matching and a merge/review UX, similar in spirit to the
+   shortcut detect-then-confirm flow.
 
 ## Project Structure
 
@@ -66,113 +127,181 @@ npm workspaces monorepo:
 
 ```
 BookmarkManager/
-├── docker-compose.yml       # db + app — same file for local dev and VPS deploy
+├── docker-compose.yml       # db + app — deploy topology (see infra notes below)
 ├── docker-compose.dev.yml   # dev override: bind-mounts source, hot-reloads the server
 ├── .env.example             # docker-compose env (Postgres creds, DEEPSEEK_API_KEY, PORT)
+├── .nvmrc                   # Node version — use nvm, not Homebrew (see infra notes)
 ├── package.json             # workspaces root
 ├── tsconfig.base.json       # shared TS compiler options
 └── packages/
-    ├── shared/    # types/contracts used by server, web, and extension
+    ├── shared/    # types/contracts (Zod) used by server, web, and extension
     ├── server/    # Fastify API + Postgres/Drizzle + DeepSeek client
-    ├── web/       # React + Vite standalone UI
+    ├── web/       # React + Vite + Tailwind + TanStack Query — the management UI
     └── extension/ # WebExtension (Manifest V3), Firefox-first
 ```
 
 ### `packages/shared`
 
-Single source of truth for API shapes, as Zod schemas (validated at runtime, not just
-typed at compile time):
-
-- [`src/types.ts`](packages/shared/src/types.ts) — `Bookmark`, `CreateBookmarkRequest`,
-  `ListBookmarksResponse`. The server validates incoming requests against these; the web
-  app validates responses against the same schemas, so a drift between what the server
-  sends and what the client expects fails loudly instead of silently.
+Zod schemas are the single source of truth for API shapes — the server validates
+requests against them, the client validates responses against the same schemas, so a
+drift between what the server sends and what the client expects fails loudly instead of
+silently. See [`src/types.ts`](packages/shared/src/types.ts).
 
 ### `packages/server`
 
 Fastify API, all routes under `/api`:
 
-- [`src/index.ts`](packages/server/src/index.ts) — app entrypoint. Registers routes,
-  and if `packages/web/dist` exists (i.e. in production/Docker), serves the built web
-  app as static files with an SPA fallback — one container serves both API and UI.
-- [`src/db/schema.ts`](packages/server/src/db/schema.ts) — Drizzle schema:
-  - `bookmarks` — url, title, extracted content, summary, category, status
-    (`pending` → `tagged`/`failed`)
-  - `tags` / `bookmark_tags` — normalized tags with a join table
-  - `bookmark_embeddings` — `bookmark_id` → `vector(1536)` (placeholder dimension until
-    an embedding provider is picked; will need a migration to resize once it is)
-- [`src/db/client.ts`](packages/server/src/db/client.ts) /
-  [`migrate.ts`](packages/server/src/db/migrate.ts) — Postgres connection + a migration
-  runner that also ensures the `vector` extension exists before any generated migration
-  needs it.
-- [`src/routes/bookmarks.ts`](packages/server/src/routes/bookmarks.ts) — `POST
-  /api/bookmarks` inserts immediately (feels instant to the caller) then kicks off
-  tagging asynchronously; `GET /api/bookmarks` lists everything with tags attached.
-- [`src/routes/tags.ts`](packages/server/src/routes/tags.ts) — `GET /api/tags`.
-- [`src/ai/tagging.ts`](packages/server/src/ai/tagging.ts) — DeepSeek client
-  (OpenAI-compatible SDK pointed at `api.deepseek.com`), asks for structured JSON tags/
-  category/summary from page content.
-- [`src/ai/embeddings.ts`](packages/server/src/ai/embeddings.ts) — the not-yet-wired
-  `EmbeddingProvider` interface described in the roadmap above.
-- [`Dockerfile`](packages/server/Dockerfile) — multi-stage build; context is the repo
-  root because it needs to build `shared` and `web` too, not just `server`.
+- [`src/index.ts`](packages/server/src/index.ts) — entrypoint. Serves the built web app
+  as static files with an SPA fallback when `packages/web/dist` exists (prod/Docker).
+  Also wires up an `undici` `ProxyAgent` from `HTTPS_PROXY`/`HTTP_PROXY` env vars —
+  Node's built-in `fetch` doesn't read these the way `curl` does, and without this,
+  outbound fetches (import's page scraping) silently hang/timeout on networks that
+  require a proxy.
+- [`src/db/schema.ts`](packages/server/src/db/schema.ts) — Drizzle schema: `bookmarks`
+  (url, title, content, summary, favicon, `categoryId`/`projectId` FKs, `status`,
+  `type`), `categories`/`projects`/`tags` (all the same upsert-by-name shape),
+  `bookmark_tags` (join table), `bookmark_embeddings` (placeholder, see AI features),
+  `import_jobs`.
+- [`src/routes/bookmarks.ts`](packages/server/src/routes/bookmarks.ts) — the big one:
+  `GET`/`POST`/`PATCH`/`DELETE /bookmarks`, plus `POST /bookmarks/preview` (stateless
+  tag generation for the extension's confirm-before-save flow) and
+  `detect-shortcuts`/`confirm-shortcuts`. `PATCH` is a true partial update (omitted
+  fields untouched, `""` clears category/project, presence of `tags` replaces the full
+  set) and is where the `status` resync logic described in Data model lives.
+- [`src/routes/import.ts`](packages/server/src/routes/import.ts) — bulk import job
+  runner. Per-URL: fetch (with the proxy dispatcher above) → extract text (deliberately
+  crude regex-based, [`extraction/html.ts`](packages/server/src/extraction/html.ts) —
+  no headless browser; pages needing JS rendering just fall through to `pending` rather
+  than failing the import) → tag. Each item's failure is isolated (one bad page can't
+  crash the whole job — this was a real incident: a NUL byte in scraped content once
+  took down an entire in-flight import).
+- [`src/ai/tagging.ts`](packages/server/src/ai/tagging.ts) / `classify.ts` — DeepSeek
+  calls (share one lazily-initialized client). `classify.ts` is the shortcut-detection
+  LLM check, reusing already-scraped content rather than re-fetching.
 
 ### `packages/web`
 
-React + Vite UI. Currently a single view
-([`src/App.tsx`](packages/web/src/App.tsx)): a form to add a bookmark and a list that
-polls every few seconds so tags show up shortly after saving.
-[`src/api.ts`](packages/web/src/api.ts) wraps `fetch` calls, validating responses
-through `@bookmark-manager/shared`'s schemas.
+React + Vite + Tailwind v4 (`@tailwindcss/vite`, zero-config) + TanStack Query v5
+(replaced manual `useState`/`useEffect` polling with `refetchInterval` + mutation cache
+invalidation). Rebuilt from a placeholder single-file viewer into the real product
+surface once there was enough real data (450 bookmarks) to design against:
+
+- [`src/App.tsx`](packages/web/src/App.tsx) — top-level shell: the
+  References/Shortcuts/Pending tab switcher and the partition logic from Data model.
+  Hosts the `category-options`/`project-options` `<datalist>`s shared by every
+  `BookmarkRow` regardless of which view rendered it.
+- [`src/ReferenceView.tsx`](packages/web/src/ReferenceView.tsx) — sub-switcher for
+  references: Category / Project (`GroupedCardView.tsx` — all groups visible as
+  collapsible sections, not a sidebar-driven "pick one folder") / Search
+  (`BookmarkList.tsx` — flat omnisearch across title/url/summary/category/project/tags).
+- [`src/ShortcutView.tsx`](packages/web/src/ShortcutView.tsx) — launcher-style favicon
+  grid, plus the detect → review (checkboxes, editable before confirming) → confirm
+  flow.
+- [`src/PendingView.tsx`](packages/web/src/PendingView.tsx) — flat, searchable list of
+  everything unresolved.
+- [`src/BookmarkRow.tsx`](packages/web/src/BookmarkRow.tsx) — the shared card: inline
+  tag pills (add/remove), category/project as `<input list>`-backed fields, delete with
+  confirm, and (only in Pending) a one-click "It's a shortcut" action.
+- [`src/Favicon.tsx`](packages/web/src/Favicon.tsx) — falls back to a colored
+  initial-circle (hashed from the title, so it's stable across reloads) when there's no
+  favicon or it fails to load.
 
 ### `packages/extension`
 
-WebExtension, Manifest V3, built for **Firefox first** (using
-`browser_specific_settings.gecko.id`), written against `webextension-polyfill` so the
-same source runs in Chrome/Edge with just a second manifest/build target later — no
-browser-specific logic to duplicate.
+WebExtension, Manifest V3, Firefox-first (`browser_specific_settings.gecko.id`), using
+`webextension-polyfill` so the same source works in Chrome/Edge later with just a
+second manifest/build target — no Chrome build target exists yet.
 
 - [`src/content.ts`](packages/extension/src/content.ts) — not a declared content
-  script; a plain function injected on demand (via `browser.scripting.executeScript`)
-  only when the user clicks "Save," so nothing runs on every page load.
-- [`src/background.ts`](packages/extension/src/background.ts) — reads the configured
-  server URL from `browser.storage.sync`, injects the extractor into the active tab,
-  POSTs the result to `/api/bookmarks`.
-- [`src/popup/popup.ts`](packages/extension/src/popup/popup.ts) — the "Save this page"
-  button UI.
-- [`src/options.ts`](packages/extension/src/options.ts) — lets the user point the
-  extension at their own self-hosted server.
+  script; a plain function injected on demand via `browser.scripting.executeScript`
+  only when the user acts, so nothing runs on every page load.
+- [`src/background.ts`](packages/extension/src/background.ts) — all `fetch`-to-server
+  logic and message handling (extraction, preview, save, list, import).
+- [`src/popup/popup.ts`](packages/extension/src/popup/popup.ts) — Save tab
+  (preview-then-confirm form) and Browse tab (read-only, searchable, grouped by
+  category/project — same partition logic as the web app, reimplemented in vanilla DOM
+  since the extension isn't React).
+- [`src/options.ts`](packages/extension/src/options.ts) — server URL config, and the
+  bulk import flow (`browser.bookmarks.getTree()` → flatten → `POST /api/import` →
+  poll for progress → CSV report download).
+- Both popup and options show a **build timestamp** (regenerated by an esbuild plugin
+  on every build, including incremental rebuilds under `--watch` — `define` can't do
+  this since it's fixed at context-creation time) so you can tell whether a `web-ext`
+  reload actually picked up the latest code.
 - [`scripts/build.mjs`](packages/extension/scripts/build.mjs) — esbuild bundles the
-  three entrypoints and copies `public/` (manifest, HTML, icons) into `dist/`.
+  entrypoints and copies `public/` into `dist/`. `npm run dev -w @bookmark-manager/extension`
+  watches; pair with `npm run start:firefox -w @bookmark-manager/extension` (`web-ext`)
+  for a real auto-reloading Firefox instance instead of manual `about:debugging` clicks.
+
+## Environment & infra decisions
+
+These were each the result of real friction — worth knowing before re-deriving them:
+
+- **Use `nvm` for Node, not Homebrew.** Homebrew's `node` formula compiling from source
+  (no bottle for this machine's macOS version) took over an hour and once left the
+  system with a broken, unlinked Node install after being interrupted. `nvm` downloads
+  prebuilt binaries directly from nodejs.org — no Homebrew dependency graph, no
+  compiling. Current pin: **Node 24** (Active LTS as of this writing — check
+  `.nvmrc`, and re-verify "Active LTS" rather than trusting this number to stay current
+  forever).
+- **Postgres runs natively via Homebrew for local dev, not Docker.** `brew install
+  postgresql@18 pgvector`. Docker is reserved for matching the actual deploy target
+  (`docker-compose.yml`, VPS) — local dev never needs Docker running at all. Homebrew
+  bottles Postgres reliably (unlike Node), so this doesn't have the same risk.
+- **`pgvector/pgvector:pg18`** in the Docker image, matching the native Postgres 18.
+- **DeepSeek, not OpenAI**, for cost. Model name is `deepseek-flash` — `deepseek-chat`/
+  `deepseek-reasoner` were discontinued 2026-07-24.
+- **The dev machine needs an outbound proxy** (`HTTPS_PROXY=http://127.0.0.1:7890` in
+  this environment, via ClashX) for most external fetches to succeed — Node's `fetch`
+  doesn't read proxy env vars the way `curl` does, hence the `undici` `ProxyAgent` wiring
+  in `index.ts`. If bulk import's fetches all mysteriously time out, check this first.
+- **Conventional commits** (`feat(scope): ...`, `fix: ...`) — this was explicit user
+  preference, applies to every commit in this repo.
+- **Commit before starting a distinct new feature/direction**, not just at the end of a
+  long session — also explicit preference. Prefer several atomic commits over one giant
+  one when a session's work touches unrelated concerns.
 
 ## Running It
 
-**Environment note**: this repo currently needs a working local Node.js install (for
-non-Docker dev workflows and `npm install`) plus Docker installed for Postgres.
-
 ```bash
+# 0. Node via nvm (see infra notes above — do not use Homebrew's node)
+nvm install   # reads .nvmrc
+
 # 1. Install dependencies (root, workspaces)
 npm install
 
 # 2. Configure environment
-cp .env.example .env                              # docker-compose (Postgres creds, DEEPSEEK_API_KEY)
-cp packages/server/.env.example packages/server/.env   # for running the server outside Docker
+cp .env.example .env                                    # docker-compose env (only needed for deploy/Docker)
+cp packages/server/.env.example packages/server/.env    # DATABASE_URL (localhost), DEEPSEEK_API_KEY
 
-# 3. Bring up Postgres + pgvector
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db
+# 3. Postgres, natively (not Docker — see infra notes)
+brew install postgresql@18 pgvector
+brew services start postgresql@18
+createuser bookmarks --createdb
+createdb bookmarks -O bookmarks
+psql -d bookmarks -c "CREATE EXTENSION vector;"
+# then set packages/server/.env's DATABASE_URL to match, e.g.
+# postgresql://bookmarks@localhost:5432/bookmarks
 
-# 4. Generate and run the first migration
+# 4. Migrate
 npm run db:generate
 npm run db:migrate
 
-# 5. Run the server and web app
+# 5. Run
 npm run dev:server   # http://localhost:3001
 npm run dev:web       # http://localhost:5173 (proxies /api to the server)
 ```
 
-To load the extension in Firefox: `about:debugging#/runtime/this-firefox` → *Load
-Temporary Add-on* → `packages/extension/dist/manifest.json` (after `npm run build -w
-@bookmark-manager/extension`). Set the server URL in the extension's options page.
+Extension, for live-reloading development:
+```bash
+npm run dev -w @bookmark-manager/extension          # esbuild --watch
+npm run start:firefox -w @bookmark-manager/extension # web-ext, separate terminal tab
+```
+Or manually: `about:debugging#/runtime/this-firefox` → *Load Temporary Add-on* →
+`packages/extension/dist/manifest.json`. Either way, set the server URL in the
+extension's options page, and check the build timestamp shown there/in the popup to
+confirm you're looking at the latest build.
 
 **VPS deploy**: `docker compose up -d --build` on the server, using the same
-`docker-compose.yml` and a production `.env`.
+`docker-compose.yml` and a production `.env`. This is the one place Docker is actually
+required.
