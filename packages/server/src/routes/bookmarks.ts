@@ -3,6 +3,7 @@ import { eq, desc, inArray } from "drizzle-orm";
 import {
   createBookmarkRequestSchema,
   previewBookmarkRequestSchema,
+  updateBookmarkRequestSchema,
   type Bookmark,
 } from "@bookmark-manager/shared";
 import { db } from "../db/client.js";
@@ -70,6 +71,11 @@ export async function linkTags(bookmarkId: number, tagNames: string[]) {
     .insert(bookmarkTags)
     .values(tagIds.map((tagId) => ({ bookmarkId, tagId })))
     .onConflictDoNothing();
+}
+
+async function setTags(bookmarkId: number, tagNames: string[]) {
+  await db.delete(bookmarkTags).where(eq(bookmarkTags.bookmarkId, bookmarkId));
+  await linkTags(bookmarkId, tagNames);
 }
 
 async function resolveCategoryId(name: string): Promise<number> {
@@ -182,5 +188,47 @@ export async function bookmarkRoutes(app: FastifyInstance) {
 
     const [bookmark] = await hydrateBookmarks([row]);
     return reply.code(201).send(bookmark);
+  });
+
+  app.patch("/bookmarks/:id", async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    const parsed = updateBookmarkRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.flatten() });
+    }
+
+    const { title, summary, category, project, tags: newTags } = parsed.data;
+    const patch: Partial<typeof bookmarks.$inferInsert> = {};
+
+    if (title !== undefined) patch.title = title;
+    if (summary !== undefined) patch.summary = summary || null;
+    if (category !== undefined) patch.categoryId = category ? await resolveCategoryId(category) : null;
+    if (project !== undefined) patch.projectId = project ? await resolveProjectId(project) : null;
+
+    // Drizzle/Postgres reject an UPDATE with an empty SET clause — a patch that only touches
+    // tags (handled separately below) would otherwise leave `patch` empty.
+    const [row] =
+      Object.keys(patch).length > 0
+        ? await db.update(bookmarks).set(patch).where(eq(bookmarks.id, id)).returning()
+        : await db.select().from(bookmarks).where(eq(bookmarks.id, id));
+    if (!row) {
+      return reply.code(404).send({ error: "Bookmark not found" });
+    }
+
+    if (newTags !== undefined) {
+      await setTags(id, newTags);
+    }
+
+    const [bookmark] = await hydrateBookmarks([row]);
+    return bookmark;
+  });
+
+  app.delete("/bookmarks/:id", async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    const [row] = await db.delete(bookmarks).where(eq(bookmarks.id, id)).returning();
+    if (!row) {
+      return reply.code(404).send({ error: "Bookmark not found" });
+    }
+    return reply.code(204).send();
   });
 }

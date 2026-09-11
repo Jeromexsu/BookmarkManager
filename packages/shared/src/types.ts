@@ -40,6 +40,17 @@ export const listBookmarksResponseSchema = z.object({
 });
 export type ListBookmarksResponse = z.infer<typeof listBookmarksResponseSchema>;
 
+// All fields optional (partial update). For category/project: omitted = leave as-is, ""
+// clears it, non-empty sets/creates it. For tags: presence means "replace the full set."
+export const updateBookmarkRequestSchema = z.object({
+  title: z.string().min(1).optional(),
+  summary: z.string().optional(),
+  category: z.string().optional(),
+  project: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+});
+export type UpdateBookmarkRequest = z.infer<typeof updateBookmarkRequestSchema>;
+
 export const previewBookmarkRequestSchema = z.object({
   url: z.string().url(),
   title: z.string().min(1),
