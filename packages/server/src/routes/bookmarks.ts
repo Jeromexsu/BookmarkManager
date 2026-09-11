@@ -1,6 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { eq, desc, inArray } from "drizzle-orm";
-import { createBookmarkRequestSchema, type Bookmark } from "@bookmark-manager/shared";
+import {
+  createBookmarkRequestSchema,
+  previewBookmarkRequestSchema,
+  type Bookmark,
+} from "@bookmark-manager/shared";
 import { db } from "../db/client.js";
 import { bookmarks, tags, bookmarkTags } from "../db/schema.js";
 import { generateTags } from "../ai/tagging.js";
@@ -35,27 +39,29 @@ async function attachTags(rows: (typeof bookmarks.$inferSelect)[]): Promise<Book
   }));
 }
 
+async function linkTags(bookmarkId: number, tagNames: string[]) {
+  if (tagNames.length === 0) return;
+
+  const tagIds: number[] = [];
+  for (const name of tagNames) {
+    const [tag] = await db
+      .insert(tags)
+      .values({ name })
+      .onConflictDoUpdate({ target: tags.name, set: { name } })
+      .returning();
+    tagIds.push(tag.id);
+  }
+
+  await db
+    .insert(bookmarkTags)
+    .values(tagIds.map((tagId) => ({ bookmarkId, tagId })))
+    .onConflictDoNothing();
+}
+
 async function tagBookmarkAsync(bookmarkId: number, content: string) {
   try {
     const result = await generateTags(content);
-
-    const tagIds: number[] = [];
-    for (const name of result.tags) {
-      const [tag] = await db
-        .insert(tags)
-        .values({ name })
-        .onConflictDoUpdate({ target: tags.name, set: { name } })
-        .returning();
-      tagIds.push(tag.id);
-    }
-
-    if (tagIds.length > 0) {
-      await db
-        .insert(bookmarkTags)
-        .values(tagIds.map((tagId) => ({ bookmarkId, tagId })))
-        .onConflictDoNothing();
-    }
-
+    await linkTags(bookmarkId, result.tags);
     await db
       .update(bookmarks)
       .set({ summary: result.summary, category: result.category, status: "tagged" })
@@ -72,13 +78,50 @@ export async function bookmarkRoutes(app: FastifyInstance) {
     return { bookmarks: await attachTags(rows) };
   });
 
+  // Stateless: generates tags/category/summary for the caller to show a user for review,
+  // without saving anything. Used by the extension's collect-then-confirm flow.
+  app.post("/bookmarks/preview", async (request, reply) => {
+    const parsed = previewBookmarkRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.flatten() });
+    }
+
+    try {
+      return await generateTags(parsed.data.content);
+    } catch (err) {
+      app.log.error(err, "Preview tagging failed");
+      return reply.code(502).send({ error: "Failed to generate tags" });
+    }
+  });
+
   app.post("/bookmarks", async (request, reply) => {
     const parsed = createBookmarkRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
 
-    const { url, title, content } = parsed.data;
+    const { url, title, content, tags: confirmedTags, category, summary } = parsed.data;
+
+    if (confirmedTags !== undefined) {
+      // Caller already ran /bookmarks/preview and got user confirmation — save as final.
+      const [row] = await db
+        .insert(bookmarks)
+        .values({
+          url,
+          title,
+          content: content ?? null,
+          summary: summary || null,
+          category: category || null,
+          status: "tagged",
+        })
+        .returning();
+
+      await linkTags(row.id, confirmedTags);
+
+      const [bookmark] = await attachTags([row]);
+      return reply.code(201).send(bookmark);
+    }
+
     const [row] = await db
       .insert(bookmarks)
       .values({ url, title, content: content ?? null, status: "pending" })

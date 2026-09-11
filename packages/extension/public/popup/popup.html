@@ -3,14 +3,45 @@
   <head>
     <meta charset="utf-8" />
     <style>
-      body { width: 260px; font-family: sans-serif; padding: 12px; }
-      button { width: 100%; padding: 8px; cursor: pointer; }
-      #status { font-size: 12px; color: #555; min-height: 1.2em; }
+      body { width: 280px; font-family: sans-serif; padding: 12px; }
+      button { padding: 8px; cursor: pointer; }
+      button.primary { width: 100%; }
+      input { width: 100%; padding: 6px; box-sizing: border-box; margin-top: 2px; }
+      label { font-size: 12px; color: #444; display: block; margin-top: 8px; }
+      #reviewTitle { font-weight: 600; margin: 0 0 4px; word-break: break-word; }
+      #reviewWarning { color: #a60; font-size: 12px; margin: 4px 0; }
+      #summary { font-size: 12px; color: #555; margin: 8px 0; }
+      .row { display: flex; gap: 8px; margin-top: 12px; }
+      .row button { flex: 1; }
+      #status, #doneMessage { font-size: 12px; color: #555; min-height: 1.2em; }
       #options { font-size: 12px; }
     </style>
   </head>
   <body>
-    <button id="save">Save this page</button>
+    <div id="initial">
+      <button id="save" class="primary">Save this page</button>
+    </div>
+
+    <div id="loading" hidden>
+      <p>Extracting page &amp; generating tags…</p>
+    </div>
+
+    <div id="review" hidden>
+      <p id="reviewTitle"></p>
+      <p id="reviewWarning"></p>
+      <label>Category<input id="category" /></label>
+      <label>Tags (comma-separated)<input id="tags" /></label>
+      <p id="summary"></p>
+      <div class="row">
+        <button id="confirmSave">Save</button>
+        <button id="cancel" type="button">Cancel</button>
+      </div>
+    </div>
+
+    <div id="done" hidden>
+      <p id="doneMessage"></p>
+    </div>
+
     <p id="status"></p>
     <a href="#" id="options">Options</a>
     <script type="module" src="popup.js"></script>
