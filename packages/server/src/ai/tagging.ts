@@ -8,7 +8,9 @@ const taggingResultSchema = z.object({
   // cookie/consent walls, bot-check interstitials, paywall notices, login screens, error
   // pages. Callers doing unattended bulk tagging (import) should treat false as "couldn't
   // really tag this," not just take tags/summary at face value.
-  meaningful: z.boolean(),
+  // Defaults true: the model occasionally omits this field despite the prompt, and an
+  // otherwise-good tags/summary result shouldn't be discarded entirely for that alone.
+  meaningful: z.boolean().default(true),
 });
 export type TaggingResult = z.infer<typeof taggingResultSchema>;
 
