@@ -96,11 +96,8 @@ export function BookmarkRow({ bookmark, showResolveActions = false }: BookmarkRo
         </div>
         <div className="text-xs text-neutral-500 truncate">{bookmark.url}</div>
 
-        {/* status is only meaningful until the user has actually added tags/a summary by hand —
-            trusting it blindly would keep showing a stale badge over data they've since filled in. */}
-        {bookmark.status === "pending" && bookmark.tags.length === 0 && !bookmark.summary && (
-          <div className="text-xs text-amber-600 mt-1">Untagged</div>
-        )}
+        {/* Only the failure reason is worth a badge here — "pending" is already the whole point
+            of the view this card lives in, so repeating it on every card is just noise. */}
         {bookmark.status === "failed" && bookmark.tags.length === 0 && !bookmark.summary && (
           <div className="text-xs text-red-600 mt-1">Tagging failed</div>
         )}
