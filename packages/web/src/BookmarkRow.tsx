@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Bookmark } from "@bookmark-manager/shared";
 import { useDeleteBookmark, useUpdateBookmark } from "./api";
+import { Favicon } from "./Favicon";
 
 interface BookmarkRowProps {
   bookmark: Bookmark;
@@ -45,14 +46,9 @@ export function BookmarkRow({ bookmark }: BookmarkRowProps) {
 
   return (
     <li className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 flex gap-3">
-      {bookmark.favicon && (
-        <img
-          src={bookmark.favicon}
-          alt=""
-          className="w-4 h-4 mt-1 rounded shrink-0"
-          onError={(e) => (e.currentTarget.style.display = "none")}
-        />
-      )}
+      <div className="mt-1">
+        <Favicon favicon={bookmark.favicon} title={bookmark.title} size="sm" />
+      </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
           <a

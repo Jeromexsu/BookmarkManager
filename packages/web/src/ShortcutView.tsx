@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Bookmark, ShortcutCandidate } from "@bookmark-manager/shared";
 import { useConfirmShortcuts, useDetectShortcuts, useUpdateBookmark } from "./api";
+import { Favicon } from "./Favicon";
 
 interface ShortcutViewProps {
   shortcuts: Bookmark[];
@@ -117,16 +118,7 @@ export function ShortcutView({ shortcuts }: ShortcutViewProps) {
               >
                 ×
               </button>
-              {s.favicon ? (
-                <img
-                  src={s.favicon}
-                  alt=""
-                  className="w-8 h-8 rounded"
-                  onError={(e) => (e.currentTarget.style.visibility = "hidden")}
-                />
-              ) : (
-                <div className="w-8 h-8 rounded bg-neutral-200 dark:bg-neutral-800" />
-              )}
+              <Favicon favicon={s.favicon} title={s.title} size="md" />
               <span className="text-xs text-center truncate w-full">{s.title}</span>
             </a>
           ))}
