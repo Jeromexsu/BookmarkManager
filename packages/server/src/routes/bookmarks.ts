@@ -127,16 +127,82 @@ async function tagBookmarkAsync(bookmarkId: number, content: string) {
   }
 }
 
+interface IncomingBookmarkSave {
+  title: string;
+  content?: string;
+  favicon?: string;
+  category?: string;
+  project?: string;
+  tags?: string[];
+  summary?: string;
+}
+
 // Saving a URL that's already in the table must not create a second row for it — that just
-// leaves the original (often still-pending) row stranded forever. Instead: fields the existing
-// row doesn't have yet get filled in from the new save; a field both sides already disagree on
-// is reported as a conflict for the caller to resolve (via PATCH) rather than silently picked.
-async function handleExistingBookmark(
+// leaves the original (often still-pending) row stranded forever. What "already exists" means
+// splits into two very different cases:
+//  - The existing row isn't tagged yet (pending/failed) — nothing on it is trustworthy or
+//    finished, so this save IS the resolution: whatever fields it provides simply take over.
+//  - The existing row is already tagged — that's someone's finished, deliberate data, so a
+//    field both sides disagree on is a real conflict, reported for the caller to resolve via
+//    PATCH rather than silently overwritten. Fields the existing row doesn't have yet still
+//    fill in automatically either way.
+async function handleExistingBookmark(existingRow: typeof bookmarks.$inferSelect, incoming: IncomingBookmarkSave, reply: FastifyReply) {
+  const [existing] = await hydrateBookmarks([existingRow]);
+
+  if (existing.status !== "tagged") {
+    return resolveBookmarkSave(existingRow, existing, incoming, reply);
+  }
+  return mergeBookmarkSave(existingRow, existing, incoming, reply);
+}
+
+async function resolveBookmarkSave(
   existingRow: typeof bookmarks.$inferSelect,
-  incoming: { content?: string; favicon?: string; category?: string; project?: string; tags?: string[]; summary?: string },
+  existing: Bookmark,
+  incoming: IncomingBookmarkSave,
   reply: FastifyReply
 ) {
-  const [existing] = await hydrateBookmarks([existingRow]);
+  const patch: Partial<typeof bookmarks.$inferInsert> = {};
+
+  if (incoming.title && incoming.title !== existing.title) patch.title = incoming.title;
+  if (incoming.content) patch.content = incoming.content;
+  if (incoming.favicon) patch.favicon = incoming.favicon;
+
+  const category = incoming.category?.trim();
+  if (category) patch.categoryId = await resolveCategoryId(category);
+
+  const project = incoming.project?.trim();
+  if (project) patch.projectId = await resolveProjectId(project);
+
+  const summary = incoming.summary?.trim();
+  if (summary) patch.summary = summary;
+
+  const tags = incoming.tags && incoming.tags.length > 0 ? incoming.tags : undefined;
+
+  const finalSummary = summary ?? existing.summary;
+  const finalTagCount = tags ? tags.length : existing.tags.length;
+  if (finalTagCount > 0 || finalSummary) {
+    patch.status = "tagged";
+  }
+
+  let row = existingRow;
+  if (Object.keys(patch).length > 0) {
+    [row] = await db.update(bookmarks).set(patch).where(eq(bookmarks.id, existingRow.id)).returning();
+  }
+  if (tags) {
+    // Matches PATCH's convention: presence of tags means "replace the full set," not merge.
+    await setTags(row.id, tags);
+  }
+
+  const [bookmark] = await hydrateBookmarks([row]);
+  return reply.code(200).send(bookmark);
+}
+
+async function mergeBookmarkSave(
+  existingRow: typeof bookmarks.$inferSelect,
+  existing: Bookmark,
+  incoming: IncomingBookmarkSave,
+  reply: FastifyReply
+) {
   const patch: Partial<typeof bookmarks.$inferInsert> = {};
   const conflicts: BookmarkConflict[] = [];
 
@@ -177,14 +243,6 @@ async function handleExistingBookmark(
         existing.tags.length === incomingTags.length && existing.tags.every((t) => incomingTags.includes(t));
       if (!sameSet) conflicts.push({ field: "tags", existingValue: existing.tags, newValue: incomingTags });
     }
-  }
-
-  // Enough real data now exists to stop calling this "unresolved" — even if some other field
-  // is still stuck in conflicts, since that's an independent, later decision.
-  const finalTagCount = tagsToLink ? tagsToLink.length : existing.tags.length;
-  const finalSummary = patch.summary ?? existing.summary;
-  if (existing.status !== "tagged" && (finalTagCount > 0 || finalSummary)) {
-    patch.status = "tagged";
   }
 
   let row = existingRow;
@@ -236,7 +294,7 @@ export async function bookmarkRoutes(app: FastifyInstance) {
 
     const [existingRow] = await db.select().from(bookmarks).where(eq(bookmarks.url, url));
     if (existingRow) {
-      return handleExistingBookmark(existingRow, { content, favicon, category, project, tags: confirmedTags, summary }, reply);
+      return handleExistingBookmark(existingRow, { title, content, favicon, category, project, tags: confirmedTags, summary }, reply);
     }
 
     const categoryId = category ? await resolveCategoryId(category) : null;
