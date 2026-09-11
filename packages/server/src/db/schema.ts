@@ -6,7 +6,9 @@ import {
   integer,
   primaryKey,
   customType,
+  jsonb,
 } from "drizzle-orm/pg-core";
+import type { ImportResultItem } from "@bookmark-manager/shared";
 
 // Dimension is a placeholder until an embedding provider is chosen (see ai/embeddings.ts).
 // pgvector requires a fixed dimension per column, so this will need a migration once decided.
@@ -77,4 +79,14 @@ export const bookmarkEmbeddings = pgTable("bookmark_embeddings", {
     .primaryKey()
     .references(() => bookmarks.id, { onDelete: "cascade" }),
   embedding: vector("embedding").notNull(),
+});
+
+// Bulk browser-bookmark import: runs as a background job since it fetches + tags many URLs.
+export const importJobs = pgTable("import_jobs", {
+  id: serial("id").primaryKey(),
+  status: text("status").notNull().default("running"), // "running" | "completed"
+  total: integer("total").notNull(),
+  processed: integer("processed").notNull().default(0),
+  results: jsonb("results").notNull().$type<ImportResultItem[]>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

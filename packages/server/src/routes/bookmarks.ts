@@ -53,7 +53,7 @@ async function hydrateBookmarks(rows: (typeof bookmarks.$inferSelect)[]): Promis
   }));
 }
 
-async function linkTags(bookmarkId: number, tagNames: string[]) {
+export async function linkTags(bookmarkId: number, tagNames: string[]) {
   if (tagNames.length === 0) return;
 
   const tagIds: number[] = [];

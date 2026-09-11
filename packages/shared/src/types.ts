@@ -59,3 +59,39 @@ export const nameListResponseSchema = z.object({
   names: z.array(z.string()),
 });
 export type NameListResponse = z.infer<typeof nameListResponseSchema>;
+
+// Bulk import (e.g. from a browser's native bookmarks): each bookmark ends up "tagged" (fetched
+// and auto-tagged successfully), "pending" (URL is alive but content couldn't be scraped/tagged
+// — same status as a normal untagged save), "invalid" (URL unreachable, not saved), or
+// "duplicate" (URL already exists, not re-saved).
+export const importOutcomeSchema = z.enum(["tagged", "pending", "invalid", "duplicate"]);
+export type ImportOutcome = z.infer<typeof importOutcomeSchema>;
+
+export const importResultItemSchema = z.object({
+  url: z.string(),
+  title: z.string(),
+  outcome: importOutcomeSchema,
+  reason: z.string().nullable(),
+});
+export type ImportResultItem = z.infer<typeof importResultItemSchema>;
+
+export const startImportRequestSchema = z.object({
+  bookmarks: z.array(z.object({ url: z.string().url(), title: z.string() })).min(1),
+});
+export type StartImportRequest = z.infer<typeof startImportRequestSchema>;
+
+export const startImportResponseSchema = z.object({
+  jobId: z.number(),
+});
+export type StartImportResponse = z.infer<typeof startImportResponseSchema>;
+
+export const importJobStatusSchema = z.enum(["running", "completed"]);
+
+export const importJobSchema = z.object({
+  id: z.number(),
+  status: importJobStatusSchema,
+  total: z.number(),
+  processed: z.number(),
+  results: z.array(importResultItemSchema),
+});
+export type ImportJob = z.infer<typeof importJobSchema>;
