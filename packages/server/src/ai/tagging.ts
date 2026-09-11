@@ -3,7 +3,6 @@ import { z } from "zod";
 
 const taggingResultSchema = z.object({
   tags: z.array(z.string()).max(8),
-  category: z.string(),
   summary: z.string(),
 });
 export type TaggingResult = z.infer<typeof taggingResultSchema>;
@@ -32,9 +31,9 @@ export async function generateTags(content: string): Promise<TaggingResult> {
       {
         role: "system",
         content:
-          "You categorize bookmarked web pages. Given page content, respond with strict JSON " +
-          '{"tags": string[] (up to 5, lowercase, short), "category": string (one or two words), ' +
-          '"summary": string (one sentence)}. No prose outside the JSON.',
+          "You tag bookmarked web pages. Given page content, respond with strict JSON " +
+          '{"tags": string[] (up to 5, lowercase, short), "summary": string (one sentence)}. ' +
+          "No prose outside the JSON.",
       },
       { role: "user", content: truncated },
     ],

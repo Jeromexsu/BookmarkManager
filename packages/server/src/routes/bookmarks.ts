@@ -6,25 +6,37 @@ import {
   type Bookmark,
 } from "@bookmark-manager/shared";
 import { db } from "../db/client.js";
-import { bookmarks, tags, bookmarkTags } from "../db/schema.js";
+import { bookmarks, tags, bookmarkTags, categories, projects } from "../db/schema.js";
 import { generateTags } from "../ai/tagging.js";
 
-async function attachTags(rows: (typeof bookmarks.$inferSelect)[]): Promise<Bookmark[]> {
+async function hydrateBookmarks(rows: (typeof bookmarks.$inferSelect)[]): Promise<Bookmark[]> {
   if (rows.length === 0) return [];
 
   const ids = rows.map((r) => r.id);
-  const joined = await db
+  const tagRows = await db
     .select({ bookmarkId: bookmarkTags.bookmarkId, name: tags.name })
     .from(bookmarkTags)
     .innerJoin(tags, eq(bookmarkTags.tagId, tags.id))
     .where(inArray(bookmarkTags.bookmarkId, ids));
 
   const tagsByBookmark = new Map<number, string[]>();
-  for (const { bookmarkId, name } of joined) {
+  for (const { bookmarkId, name } of tagRows) {
     const list = tagsByBookmark.get(bookmarkId) ?? [];
     list.push(name);
     tagsByBookmark.set(bookmarkId, list);
   }
+
+  const categoryIds = [...new Set(rows.map((r) => r.categoryId).filter((id): id is number => id !== null))];
+  const categoryRows = categoryIds.length
+    ? await db.select().from(categories).where(inArray(categories.id, categoryIds))
+    : [];
+  const categoryNameById = new Map(categoryRows.map((c) => [c.id, c.name]));
+
+  const projectIds = [...new Set(rows.map((r) => r.projectId).filter((id): id is number => id !== null))];
+  const projectRows = projectIds.length
+    ? await db.select().from(projects).where(inArray(projects.id, projectIds))
+    : [];
+  const projectNameById = new Map(projectRows.map((p) => [p.id, p.name]));
 
   return rows.map((row) => ({
     id: row.id,
@@ -32,7 +44,9 @@ async function attachTags(rows: (typeof bookmarks.$inferSelect)[]): Promise<Book
     title: row.title,
     content: row.content,
     summary: row.summary,
-    category: row.category,
+    favicon: row.favicon,
+    category: row.categoryId !== null ? (categoryNameById.get(row.categoryId) ?? null) : null,
+    project: row.projectId !== null ? (projectNameById.get(row.projectId) ?? null) : null,
     status: row.status as Bookmark["status"],
     tags: tagsByBookmark.get(row.id) ?? [],
     createdAt: row.createdAt.toISOString(),
@@ -58,13 +72,31 @@ async function linkTags(bookmarkId: number, tagNames: string[]) {
     .onConflictDoNothing();
 }
 
+async function resolveCategoryId(name: string): Promise<number> {
+  const [row] = await db
+    .insert(categories)
+    .values({ name })
+    .onConflictDoUpdate({ target: categories.name, set: { name } })
+    .returning();
+  return row.id;
+}
+
+async function resolveProjectId(name: string): Promise<number> {
+  const [row] = await db
+    .insert(projects)
+    .values({ name })
+    .onConflictDoUpdate({ target: projects.name, set: { name } })
+    .returning();
+  return row.id;
+}
+
 async function tagBookmarkAsync(bookmarkId: number, content: string) {
   try {
     const result = await generateTags(content);
     await linkTags(bookmarkId, result.tags);
     await db
       .update(bookmarks)
-      .set({ summary: result.summary, category: result.category, status: "tagged" })
+      .set({ summary: result.summary, status: "tagged" })
       .where(eq(bookmarks.id, bookmarkId));
   } catch (err) {
     await db.update(bookmarks).set({ status: "failed" }).where(eq(bookmarks.id, bookmarkId));
@@ -75,11 +107,12 @@ async function tagBookmarkAsync(bookmarkId: number, content: string) {
 export async function bookmarkRoutes(app: FastifyInstance) {
   app.get("/bookmarks", async () => {
     const rows = await db.select().from(bookmarks).orderBy(desc(bookmarks.createdAt));
-    return { bookmarks: await attachTags(rows) };
+    return { bookmarks: await hydrateBookmarks(rows) };
   });
 
-  // Stateless: generates tags/category/summary for the caller to show a user for review,
-  // without saving anything. Used by the extension's collect-then-confirm flow.
+  // Stateless: generates tags/summary for the caller to show a user for review, without
+  // saving anything. Used by the extension's collect-then-confirm flow. Category/project are
+  // never AI-generated, so they're not part of this response — the user sets them directly.
   app.post("/bookmarks/preview", async (request, reply) => {
     const parsed = previewBookmarkRequestSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -100,7 +133,10 @@ export async function bookmarkRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
 
-    const { url, title, content, tags: confirmedTags, category, summary } = parsed.data;
+    const { url, title, content, favicon, category, project, tags: confirmedTags, summary } = parsed.data;
+
+    const categoryId = category ? await resolveCategoryId(category) : null;
+    const projectId = project ? await resolveProjectId(project) : null;
 
     if (confirmedTags !== undefined) {
       // Caller already ran /bookmarks/preview and got user confirmation — save as final.
@@ -110,21 +146,31 @@ export async function bookmarkRoutes(app: FastifyInstance) {
           url,
           title,
           content: content ?? null,
+          favicon: favicon ?? null,
           summary: summary || null,
-          category: category || null,
+          categoryId,
+          projectId,
           status: "tagged",
         })
         .returning();
 
       await linkTags(row.id, confirmedTags);
 
-      const [bookmark] = await attachTags([row]);
+      const [bookmark] = await hydrateBookmarks([row]);
       return reply.code(201).send(bookmark);
     }
 
     const [row] = await db
       .insert(bookmarks)
-      .values({ url, title, content: content ?? null, status: "pending" })
+      .values({
+        url,
+        title,
+        content: content ?? null,
+        favicon: favicon ?? null,
+        categoryId,
+        projectId,
+        status: "pending",
+      })
       .returning();
 
     if (content) {
@@ -134,7 +180,7 @@ export async function bookmarkRoutes(app: FastifyInstance) {
       });
     }
 
-    const [bookmark] = await attachTags([row]);
+    const [bookmark] = await hydrateBookmarks([row]);
     return reply.code(201).send(bookmark);
   });
 }

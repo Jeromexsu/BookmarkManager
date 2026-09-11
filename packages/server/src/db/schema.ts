@@ -28,13 +28,28 @@ const vector = customType<{ data: number[]; driverData: string }>({
   },
 });
 
+// A broad, user-only grouping (e.g. lifestyle/coding/travel). AI-assisted suggestions are a
+// later "management" feature, not part of the extension's collection flow.
+export const categories = pgTable("categories", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+});
+
+// A bundle of deep-coupled bookmarks, always user-specified — never AI-generated.
+export const projects = pgTable("projects", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+});
+
 export const bookmarks = pgTable("bookmarks", {
   id: serial("id").primaryKey(),
   url: text("url").notNull(),
   title: text("title").notNull(),
   content: text("content"),
   summary: text("summary"),
-  category: text("category"),
+  favicon: text("favicon"),
+  categoryId: integer("category_id").references(() => categories.id, { onDelete: "set null" }),
+  projectId: integer("project_id").references(() => projects.id, { onDelete: "set null" }),
   status: text("status").notNull().default("pending"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

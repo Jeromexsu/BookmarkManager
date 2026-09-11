@@ -60,6 +60,16 @@ export function App() {
       <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 12 }}>
         {bookmarks.map((b) => (
           <li key={b.id} style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
+            {b.favicon && (
+              <img
+                src={b.favicon}
+                alt=""
+                width={16}
+                height={16}
+                style={{ verticalAlign: "middle", marginRight: 6, borderRadius: 3 }}
+                onError={(e) => (e.currentTarget.style.display = "none")}
+              />
+            )}
             <a href={b.url} target="_blank" rel="noreferrer" style={{ fontWeight: 600 }}>
               {b.title}
             </a>
@@ -68,6 +78,7 @@ export function App() {
             {b.status === "failed" && <div style={{ fontSize: 12, color: "crimson" }}>Tagging failed</div>}
             {b.summary && <p style={{ margin: "8px 0" }}>{b.summary}</p>}
             {b.category && <span style={{ fontSize: 12, marginRight: 8 }}>📁 {b.category}</span>}
+            {b.project && <span style={{ fontSize: 12, marginRight: 8 }}>📦 {b.project}</span>}
             {b.tags.map((tag) => (
               <span
                 key={tag}
