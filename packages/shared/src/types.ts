@@ -162,3 +162,32 @@ export const confirmShortcutsRequestSchema = z.object({
   ids: z.array(z.number()).min(1),
 });
 export type ConfirmShortcutsRequest = z.infer<typeof confirmShortcutsRequestSchema>;
+
+// Suggest-then-apply category grouping: scans "reference" bookmarks (either just the
+// uncategorized ones, or every one — the caller's choice, since re-bucketing everything is a
+// deliberate reorganization, not the default) and proposes broad category buckets (travel,
+// news, computer science — big topic areas, not narrow tags) for the user to review, rather
+// than assigning anything outright.
+export const suggestCategoriesScopeSchema = z.enum(["uncategorized", "all"]);
+export type SuggestCategoriesScope = z.infer<typeof suggestCategoriesScopeSchema>;
+
+export const suggestCategoriesRequestSchema = z.object({
+  scope: suggestCategoriesScopeSchema.default("uncategorized"),
+});
+export type SuggestCategoriesRequest = z.infer<typeof suggestCategoriesRequestSchema>;
+
+export const categorySuggestionSchema = z.object({
+  category: z.string(),
+  bookmarkIds: z.array(z.number()),
+});
+export type CategorySuggestion = z.infer<typeof categorySuggestionSchema>;
+
+export const suggestCategoriesResponseSchema = z.object({
+  suggestions: z.array(categorySuggestionSchema),
+});
+export type SuggestCategoriesResponse = z.infer<typeof suggestCategoriesResponseSchema>;
+
+export const applyCategoriesRequestSchema = z.object({
+  assignments: z.array(z.object({ id: z.number(), category: z.string().min(1) })).min(1),
+});
+export type ApplyCategoriesRequest = z.infer<typeof applyCategoriesRequestSchema>;

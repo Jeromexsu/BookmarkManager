@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { Bookmark } from "@bookmark-manager/shared";
 import { GroupedCardView } from "./GroupedCardView";
 import { BookmarkList } from "./BookmarkList";
+import { CategorySuggestions } from "./CategorySuggestions";
 
 interface ReferenceViewProps {
   bookmarks: Bookmark[];
@@ -22,6 +23,10 @@ export function ReferenceView({ bookmarks }: ReferenceViewProps) {
         .some((field) => field.toLowerCase().includes(q))
     );
   }, [bookmarks, query]);
+
+  // Suggestions come back scoped to ALL uncategorized bookmarks server-side, not just the
+  // current search results, so the title lookup needs the full unfiltered set too.
+  const bookmarkTitleById = useMemo(() => new Map(bookmarks.map((b) => [b.id, b.title])), [bookmarks]);
 
   return (
     <div className="flex-1 min-w-0 p-4 overflow-y-auto">
@@ -47,6 +52,8 @@ export function ReferenceView({ bookmarks }: ReferenceViewProps) {
           </button>
         ))}
       </nav>
+
+      {subView === "category" && <CategorySuggestions bookmarkTitleById={bookmarkTitleById} />}
 
       {subView === "all" ? (
         <BookmarkList bookmarks={filtered} />

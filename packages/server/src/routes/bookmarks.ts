@@ -1,18 +1,22 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { eq, desc, inArray } from "drizzle-orm";
+import { eq, desc, inArray, isNull, and } from "drizzle-orm";
 import {
   createBookmarkRequestSchema,
   previewBookmarkRequestSchema,
   updateBookmarkRequestSchema,
   confirmShortcutsRequestSchema,
+  suggestCategoriesRequestSchema,
+  applyCategoriesRequestSchema,
   type Bookmark,
   type BookmarkConflict,
   type ShortcutCandidate,
+  type CategorySuggestion,
 } from "@bookmark-manager/shared";
 import { db } from "../db/client.js";
 import { bookmarks, tags, bookmarkTags, categories, projects } from "../db/schema.js";
 import { generateTags } from "../ai/tagging.js";
 import { classifyShortcut } from "../ai/classify.js";
+import { suggestCategories } from "../ai/categorize.js";
 
 async function hydrateBookmarks(rows: (typeof bookmarks.$inferSelect)[]): Promise<Bookmark[]> {
   if (rows.length === 0) return [];
@@ -447,5 +451,74 @@ export async function bookmarkRoutes(app: FastifyInstance) {
       .set({ type: "shortcut", status: "resolved" })
       .where(inArray(bookmarks.id, parsed.data.ids));
     return { updated: parsed.data.ids.length };
+  });
+
+  // Suggest-then-apply, same convention as detect/confirm-shortcuts above — never assigns a
+  // category outright. Scope defaults to just-uncategorized (matching the web app's
+  // "Uncategorized" bucket); "all" re-buckets every resolved reference, a deliberate
+  // reorganization the caller opts into rather than something that happens by default.
+  app.post("/bookmarks/suggest-categories", async (request, reply) => {
+    const parsed = suggestCategoriesRequestSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.flatten() });
+    }
+
+    const baseCondition = and(eq(bookmarks.type, "reference"), eq(bookmarks.status, "resolved"));
+    const condition = parsed.data.scope === "all" ? baseCondition : and(baseCondition, isNull(bookmarks.categoryId));
+
+    const rows = await db.select().from(bookmarks).where(condition);
+
+    if (rows.length === 0) {
+      return { suggestions: [] } satisfies { suggestions: CategorySuggestion[] };
+    }
+
+    const ids = rows.map((r) => r.id);
+    const tagRows = await db
+      .select({ bookmarkId: bookmarkTags.bookmarkId, name: tags.name })
+      .from(bookmarkTags)
+      .innerJoin(tags, eq(bookmarkTags.tagId, tags.id))
+      .where(inArray(bookmarkTags.bookmarkId, ids));
+    const tagsByBookmark = new Map<number, string[]>();
+    for (const { bookmarkId, name } of tagRows) {
+      const list = tagsByBookmark.get(bookmarkId) ?? [];
+      list.push(name);
+      tagsByBookmark.set(bookmarkId, list);
+    }
+
+    const existingCategories = (await db.select().from(categories)).map((c) => c.name);
+    const items = rows.map((r) => ({ id: r.id, title: r.title, tags: tagsByBookmark.get(r.id) ?? [] }));
+
+    try {
+      const result = await suggestCategories(items, existingCategories);
+      const suggestions: CategorySuggestion[] = result.categories.map((c) => ({
+        category: c.name,
+        bookmarkIds: c.bookmarkIds,
+      }));
+      return { suggestions };
+    } catch (err) {
+      app.log.error(err, "Category suggestion failed");
+      return reply.code(502).send({ error: "Failed to suggest categories" });
+    }
+  });
+
+  app.post("/bookmarks/apply-categories", async (request, reply) => {
+    const parsed = applyCategoriesRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.flatten() });
+    }
+
+    const idsByCategory = new Map<string, number[]>();
+    for (const { id, category } of parsed.data.assignments) {
+      const list = idsByCategory.get(category) ?? [];
+      list.push(id);
+      idsByCategory.set(category, list);
+    }
+
+    for (const [categoryName, categoryIds] of idsByCategory) {
+      const categoryId = await resolveCategoryId(categoryName);
+      await db.update(bookmarks).set({ categoryId }).where(inArray(bookmarks.id, categoryIds));
+    }
+
+    return { updated: parsed.data.assignments.length };
   });
 }

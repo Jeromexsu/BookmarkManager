@@ -2,10 +2,13 @@ import {
   type Bookmark,
   type UpdateBookmarkRequest,
   type ShortcutCandidate,
+  type CategorySuggestion,
+  type SuggestCategoriesScope,
   listBookmarksResponseSchema,
   bookmarkSchema,
   nameListResponseSchema,
   detectShortcutsResponseSchema,
+  suggestCategoriesResponseSchema,
 } from "@bookmark-manager/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -50,6 +53,25 @@ async function confirmShortcuts(ids: number[]): Promise<void> {
     body: JSON.stringify({ ids }),
   });
   if (!res.ok) throw new Error(`Failed to confirm shortcuts: ${res.status}`);
+}
+
+async function suggestCategories(scope: SuggestCategoriesScope): Promise<CategorySuggestion[]> {
+  const res = await fetch("/api/bookmarks/suggest-categories", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scope }),
+  });
+  if (!res.ok) throw new Error(`Failed to suggest categories: ${res.status}`);
+  return suggestCategoriesResponseSchema.parse(await res.json()).suggestions;
+}
+
+async function applyCategories(assignments: { id: number; category: string }[]): Promise<void> {
+  const res = await fetch("/api/bookmarks/apply-categories", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ assignments }),
+  });
+  if (!res.ok) throw new Error(`Failed to apply categories: ${res.status}`);
 }
 
 const bookmarksKey = ["bookmarks"] as const;
@@ -100,5 +122,20 @@ export function useConfirmShortcuts() {
   return useMutation({
     mutationFn: confirmShortcuts,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: bookmarksKey }),
+  });
+}
+
+export function useSuggestCategories() {
+  return useMutation({ mutationFn: suggestCategories });
+}
+
+export function useApplyCategories() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: applyCategories,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: bookmarksKey });
+      queryClient.invalidateQueries({ queryKey: ["categories"] });
+    },
   });
 }
