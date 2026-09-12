@@ -7,7 +7,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
-      - db-data:/var/lib/postgresql/data
+      # Postgres 18+ images expect the mount at the parent dir, not .../postgresql/data — see
+      # the same comment in docker-compose.prod.yml.
+      - db-data:/var/lib/postgresql
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:

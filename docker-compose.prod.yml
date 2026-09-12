@@ -18,7 +18,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
-      - db-data:/var/lib/postgresql/data
+      # Postgres 18+ images expect the mount at the parent dir (they organize data under a
+      # version-specific subdirectory internally for pg_ctlcluster-style upgrades) — the old
+      # pre-18 convention of mounting straight at .../postgresql/data makes the entrypoint
+      # refuse to start, since it finds data at a path it no longer expects.
+      - db-data:/var/lib/postgresql
     # No published port. Only `app`, on this same compose network, ever needs to reach
     # Postgres — nothing outside this stack should be able to talk to it directly.
     healthcheck:
