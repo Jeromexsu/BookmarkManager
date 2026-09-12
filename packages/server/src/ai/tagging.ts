@@ -14,6 +14,12 @@ const taggingResultSchema = z.object({
 });
 export type TaggingResult = z.infer<typeof taggingResultSchema>;
 
+// The SDK's own default (10 minutes) is far too long to treat a call as "hung" — especially
+// now that some callers (category suggestion) run as a persisted job someone might be watching
+// for a stuck-looking "running" status. 60s covers every single-item call here with room to
+// spare; the batch category-suggestion call passes its own longer override per-request.
+const DEFAULT_TIMEOUT_MS = 60_000;
+
 let client: OpenAI | null = null;
 export function getClient(): OpenAI {
   if (!client) {
@@ -21,7 +27,7 @@ export function getClient(): OpenAI {
     if (!apiKey) {
       throw new Error("DEEPSEEK_API_KEY is not set");
     }
-    client = new OpenAI({ apiKey, baseURL: "https://api.deepseek.com" });
+    client = new OpenAI({ apiKey, baseURL: "https://api.deepseek.com", timeout: DEFAULT_TIMEOUT_MS, maxRetries: 1 });
   }
   return client;
 }
