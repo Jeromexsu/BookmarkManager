@@ -20,7 +20,7 @@ import { bookmarks, tags, bookmarkTags, categories, projects, categorySuggestion
 import { generateTags } from "../ai/tagging.js";
 import { classifyShortcut } from "../ai/classify.js";
 import { suggestTitle } from "../ai/title.js";
-import { suggestCategories } from "../ai/categorize.js";
+import { pickCategoryTaxonomy, classifyChunk } from "../ai/categorize.js";
 
 async function hydrateBookmarks(rows: (typeof bookmarks.$inferSelect)[]): Promise<Bookmark[]> {
   if (rows.length === 0) return [];
@@ -135,10 +135,18 @@ async function tagBookmarkAsync(bookmarkId: number, content: string) {
   }
 }
 
+const CATEGORY_SUGGESTION_CHUNK_SIZE = 60;
+const CATEGORY_SUGGESTION_CONCURRENCY = 4;
+
 // Runs in the background after the POST /bookmarks/suggest-categories request already
 // responded with a jobId — the model call can take a minute or two, and writing the result to
 // this row (rather than only ever returning it in one HTTP response) is what lets the caller
 // leave the page and come back to find it.
+//
+// Two passes, not one call for the whole set: first decide the taxonomy (small output — just
+// category names), then classify chunks of bookmarks against that fixed list concurrently (each
+// chunk's output is only its own ids, not everyone's). Keeps any one call's output small and
+// bounds a slow/failed chunk's damage to just that chunk instead of the whole run.
 async function runCategorySuggestionJob(jobId: number, scope: SuggestCategoriesScope) {
   try {
     const baseCondition = and(eq(bookmarks.type, "reference"), eq(bookmarks.status, "resolved"));
@@ -169,11 +177,43 @@ async function runCategorySuggestionJob(jobId: number, scope: SuggestCategoriesS
     const existingCategories = (await db.select().from(categories)).map((c) => c.name);
     const items = rows.map((r) => ({ id: r.id, title: r.title, tags: tagsByBookmark.get(r.id) ?? [] }));
 
-    const result = await suggestCategories(items, existingCategories);
-    const suggestions: CategorySuggestion[] = result.categories.map((c) => ({
-      category: c.name,
-      bookmarkIds: c.bookmarkIds,
-    }));
+    const categoryNames = await pickCategoryTaxonomy(items, existingCategories);
+
+    const chunks: (typeof items)[] = [];
+    for (let i = 0; i < items.length; i += CATEGORY_SUGGESTION_CHUNK_SIZE) {
+      chunks.push(items.slice(i, i + CATEGORY_SUGGESTION_CHUNK_SIZE));
+    }
+
+    const merged = new Map<string, number[]>();
+    let succeededChunks = 0;
+
+    const queue = [...chunks];
+    async function worker() {
+      while (queue.length > 0) {
+        const chunk = queue.shift()!;
+        try {
+          const result = await classifyChunk(chunk, categoryNames);
+          succeededChunks++;
+          for (const [category, bookmarkIds] of result) {
+            const list = merged.get(category) ?? [];
+            list.push(...bookmarkIds);
+            merged.set(category, list);
+          }
+        } catch {
+          // One chunk timing out or erroring shouldn't lose the whole run — its bookmarks just
+          // stay unsuggested this time, same as if the job had never run for them.
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: CATEGORY_SUGGESTION_CONCURRENCY }, worker));
+
+    if (succeededChunks === 0) {
+      throw new Error("Every classification chunk failed");
+    }
+
+    const suggestions: CategorySuggestion[] = [...merged.entries()]
+      .filter(([, bookmarkIds]) => bookmarkIds.length > 0)
+      .map(([category, bookmarkIds]) => ({ category, bookmarkIds }));
 
     await db
       .update(categorySuggestionJobs)
