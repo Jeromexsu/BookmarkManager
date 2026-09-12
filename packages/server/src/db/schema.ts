@@ -8,7 +8,7 @@ import {
   customType,
   jsonb,
 } from "drizzle-orm/pg-core";
-import type { ImportResultItem } from "@bookmark-manager/shared";
+import type { ImportResultItem, CategorySuggestion } from "@bookmark-manager/shared";
 
 // Dimension is a placeholder until an embedding provider is chosen (see ai/embeddings.ts).
 // pgvector requires a fixed dimension per column, so this will need a migration once decided.
@@ -91,5 +91,17 @@ export const importJobs = pgTable("import_jobs", {
   total: integer("total").notNull(),
   processed: integer("processed").notNull().default(0),
   results: jsonb("results").notNull().$type<ImportResultItem[]>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// A single suggest-categories request against many bookmarks can take a minute or two against
+// the model — persisted as a job (like importJobs above) so the result survives the caller
+// closing the tab or switching away mid-request, not just living in one HTTP response.
+export const categorySuggestionJobs = pgTable("category_suggestion_jobs", {
+  id: serial("id").primaryKey(),
+  status: text("status").notNull().default("running"), // "running" | "completed" | "failed"
+  scope: text("scope").notNull(), // "uncategorized" | "all"
+  suggestions: jsonb("suggestions").$type<CategorySuggestion[]>(),
+  error: text("error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

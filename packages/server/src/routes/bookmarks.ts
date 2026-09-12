@@ -12,9 +12,11 @@ import {
   type BookmarkConflict,
   type ShortcutCandidate,
   type CategorySuggestion,
+  type CategorySuggestionJob,
+  type SuggestCategoriesScope,
 } from "@bookmark-manager/shared";
 import { db } from "../db/client.js";
-import { bookmarks, tags, bookmarkTags, categories, projects } from "../db/schema.js";
+import { bookmarks, tags, bookmarkTags, categories, projects, categorySuggestionJobs } from "../db/schema.js";
 import { generateTags } from "../ai/tagging.js";
 import { classifyShortcut } from "../ai/classify.js";
 import { suggestTitle } from "../ai/title.js";
@@ -130,6 +132,58 @@ async function tagBookmarkAsync(bookmarkId: number, content: string) {
   } catch (err) {
     await db.update(bookmarks).set({ status: "failed" }).where(eq(bookmarks.id, bookmarkId));
     throw err;
+  }
+}
+
+// Runs in the background after the POST /bookmarks/suggest-categories request already
+// responded with a jobId — the model call can take a minute or two, and writing the result to
+// this row (rather than only ever returning it in one HTTP response) is what lets the caller
+// leave the page and come back to find it.
+async function runCategorySuggestionJob(jobId: number, scope: SuggestCategoriesScope) {
+  try {
+    const baseCondition = and(eq(bookmarks.type, "reference"), eq(bookmarks.status, "resolved"));
+    const condition = scope === "all" ? baseCondition : and(baseCondition, isNull(bookmarks.categoryId));
+    const rows = await db.select().from(bookmarks).where(condition);
+
+    if (rows.length === 0) {
+      await db
+        .update(categorySuggestionJobs)
+        .set({ status: "completed", suggestions: [] })
+        .where(eq(categorySuggestionJobs.id, jobId));
+      return;
+    }
+
+    const ids = rows.map((r) => r.id);
+    const tagRows = await db
+      .select({ bookmarkId: bookmarkTags.bookmarkId, name: tags.name })
+      .from(bookmarkTags)
+      .innerJoin(tags, eq(bookmarkTags.tagId, tags.id))
+      .where(inArray(bookmarkTags.bookmarkId, ids));
+    const tagsByBookmark = new Map<number, string[]>();
+    for (const { bookmarkId, name } of tagRows) {
+      const list = tagsByBookmark.get(bookmarkId) ?? [];
+      list.push(name);
+      tagsByBookmark.set(bookmarkId, list);
+    }
+
+    const existingCategories = (await db.select().from(categories)).map((c) => c.name);
+    const items = rows.map((r) => ({ id: r.id, title: r.title, tags: tagsByBookmark.get(r.id) ?? [] }));
+
+    const result = await suggestCategories(items, existingCategories);
+    const suggestions: CategorySuggestion[] = result.categories.map((c) => ({
+      category: c.name,
+      bookmarkIds: c.bookmarkIds,
+    }));
+
+    await db
+      .update(categorySuggestionJobs)
+      .set({ status: "completed", suggestions })
+      .where(eq(categorySuggestionJobs.id, jobId));
+  } catch (err) {
+    await db
+      .update(categorySuggestionJobs)
+      .set({ status: "failed", error: err instanceof Error ? err.message : "Unknown error" })
+      .where(eq(categorySuggestionJobs.id, jobId));
   }
 }
 
@@ -476,48 +530,42 @@ export async function bookmarkRoutes(app: FastifyInstance) {
   // category outright. Scope defaults to just-uncategorized (matching the web app's
   // "Uncategorized" bucket); "all" re-buckets every resolved reference, a deliberate
   // reorganization the caller opts into rather than something that happens by default.
+  //
+  // Runs as a background job (like /import above), not a single blocking response — the model
+  // call can take a minute or two, and this responds immediately with a jobId so the caller can
+  // navigate away and poll GET /bookmarks/suggest-categories/:id for the result later.
   app.post("/bookmarks/suggest-categories", async (request, reply) => {
     const parsed = suggestCategoriesRequestSchema.safeParse(request.body ?? {});
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
 
-    const baseCondition = and(eq(bookmarks.type, "reference"), eq(bookmarks.status, "resolved"));
-    const condition = parsed.data.scope === "all" ? baseCondition : and(baseCondition, isNull(bookmarks.categoryId));
+    const [job] = await db
+      .insert(categorySuggestionJobs)
+      .values({ status: "running", scope: parsed.data.scope })
+      .returning();
 
-    const rows = await db.select().from(bookmarks).where(condition);
+    runCategorySuggestionJob(job.id, parsed.data.scope).catch((err) => {
+      app.log.error(err, `Category suggestion job ${job.id} failed`);
+    });
 
-    if (rows.length === 0) {
-      return { suggestions: [] } satisfies { suggestions: CategorySuggestion[] };
+    return reply.code(201).send({ jobId: job.id });
+  });
+
+  app.get("/bookmarks/suggest-categories/:id", async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    const [job] = await db.select().from(categorySuggestionJobs).where(eq(categorySuggestionJobs.id, id));
+    if (!job) {
+      return reply.code(404).send({ error: "Suggestion job not found" });
     }
-
-    const ids = rows.map((r) => r.id);
-    const tagRows = await db
-      .select({ bookmarkId: bookmarkTags.bookmarkId, name: tags.name })
-      .from(bookmarkTags)
-      .innerJoin(tags, eq(bookmarkTags.tagId, tags.id))
-      .where(inArray(bookmarkTags.bookmarkId, ids));
-    const tagsByBookmark = new Map<number, string[]>();
-    for (const { bookmarkId, name } of tagRows) {
-      const list = tagsByBookmark.get(bookmarkId) ?? [];
-      list.push(name);
-      tagsByBookmark.set(bookmarkId, list);
-    }
-
-    const existingCategories = (await db.select().from(categories)).map((c) => c.name);
-    const items = rows.map((r) => ({ id: r.id, title: r.title, tags: tagsByBookmark.get(r.id) ?? [] }));
-
-    try {
-      const result = await suggestCategories(items, existingCategories);
-      const suggestions: CategorySuggestion[] = result.categories.map((c) => ({
-        category: c.name,
-        bookmarkIds: c.bookmarkIds,
-      }));
-      return { suggestions };
-    } catch (err) {
-      app.log.error(err, "Category suggestion failed");
-      return reply.code(502).send({ error: "Failed to suggest categories" });
-    }
+    return {
+      id: job.id,
+      status: job.status as CategorySuggestionJob["status"],
+      scope: job.scope as CategorySuggestionJob["scope"],
+      suggestions: job.suggestions ?? null,
+      error: job.error,
+      createdAt: job.createdAt.toISOString(),
+    } satisfies CategorySuggestionJob;
   });
 
   app.post("/bookmarks/apply-categories", async (request, reply) => {

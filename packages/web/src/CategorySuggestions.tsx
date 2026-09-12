@@ -1,6 +1,17 @@
 import { useEffect, useState } from "react";
-import type { CategorySuggestion, SuggestCategoriesScope } from "@bookmark-manager/shared";
-import { useApplyCategories, useSuggestCategories } from "./api";
+import type { SuggestCategoriesScope } from "@bookmark-manager/shared";
+import { useApplyCategories, useCategorySuggestionJob, useStartSuggestCategories } from "./api";
+
+// Persisted (not component state) so the job survives a tab switch, a reload, or closing and
+// reopening the page entirely — the actual work lives server-side as a job row; this is just
+// "which job am I watching," which needs to outlive the component too.
+const STORAGE_KEY = "categorySuggestionJobId";
+
+function readStoredJobId(): number | null {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 interface CategorySuggestionsProps {
   // Keyed by id so the review panel can show titles without a second fetch — suggestions come
@@ -10,31 +21,45 @@ interface CategorySuggestionsProps {
 }
 
 export function CategorySuggestions({ bookmarkTitleById }: CategorySuggestionsProps) {
-  const suggestMutation = useSuggestCategories();
+  const startMutation = useStartSuggestCategories();
   const applyMutation = useApplyCategories();
   const [scope, setScope] = useState<SuggestCategoriesScope>("uncategorized");
-  const [suggestions, setSuggestions] = useState<CategorySuggestion[] | null>(null);
+  const [jobId, setJobId] = useState<number | null>(readStoredJobId);
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
+  const jobQuery = useCategorySuggestionJob(jobId);
+  const isRunning = jobId !== null && jobQuery.data?.status !== "completed" && jobQuery.data?.status !== "failed";
+
   // Large batches can legitimately take 30-90s against the model with no intermediate
   // progress — a ticking counter is the difference between "still working" and "looks hung".
+  // Anchored to the job's actual createdAt (not this component's mount time) so reopening the
+  // page after a while shows real elapsed time, not a counter that restarted from zero.
   useEffect(() => {
-    if (!suggestMutation.isPending) {
+    const createdAt = jobQuery.data?.createdAt;
+    if (!isRunning || !createdAt) {
       setElapsedSeconds(0);
       return;
     }
-    const start = Date.now();
-    const interval = setInterval(() => setElapsedSeconds(Math.floor((Date.now() - start) / 1000)), 1000);
+    const start = new Date(createdAt).getTime();
+    const tick = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - start) / 1000)));
+    tick();
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [suggestMutation.isPending]);
+  }, [isRunning, jobQuery.data?.createdAt]);
 
   async function handleSuggest() {
-    const result = await suggestMutation.mutateAsync(scope);
+    const newJobId = await startMutation.mutateAsync(scope);
+    localStorage.setItem(STORAGE_KEY, String(newJobId));
     setExcluded(new Set());
     setExpanded(new Set());
-    setSuggestions(result);
+    setJobId(newJobId);
+  }
+
+  function dismiss() {
+    localStorage.removeItem(STORAGE_KEY);
+    setJobId(null);
   }
 
   function toggleSet(set: Set<string>, setSet: (s: Set<string>) => void, key: string) {
@@ -45,6 +70,7 @@ export function CategorySuggestions({ bookmarkTitleById }: CategorySuggestionsPr
   }
 
   async function handleApply() {
+    const suggestions = jobQuery.data?.suggestions;
     if (!suggestions) return;
     const assignments = suggestions
       .filter((s) => !excluded.has(s.category))
@@ -53,10 +79,10 @@ export function CategorySuggestions({ bookmarkTitleById }: CategorySuggestionsPr
     if (assignments.length > 0) {
       await applyMutation.mutateAsync(assignments);
     }
-    setSuggestions(null);
+    dismiss();
   }
 
-  if (!suggestions) {
+  if (jobId === null) {
     return (
       <div className="mb-4 p-3 rounded-lg border border-neutral-200 dark:border-neutral-800 flex items-center gap-3 flex-wrap">
         <div className="flex bg-neutral-100 dark:bg-neutral-800 rounded-md p-0.5">
@@ -77,26 +103,57 @@ export function CategorySuggestions({ bookmarkTitleById }: CategorySuggestionsPr
 
         <button
           onClick={handleSuggest}
-          disabled={suggestMutation.isPending}
+          disabled={startMutation.isPending}
           className="px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 text-sm font-medium hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-50"
         >
-          {suggestMutation.isPending ? `Suggesting… ${elapsedSeconds}s` : "Suggest categories"}
+          Suggest categories
         </button>
 
-        {suggestMutation.isPending && (
-          <p className="text-xs text-neutral-400">Large batches can take up to a minute or two — it's working, not stuck.</p>
-        )}
-        {suggestMutation.isError && <p className="text-xs text-red-600">Couldn't get suggestions.</p>}
+        {startMutation.isError && <p className="text-xs text-red-600">Couldn't start the suggestion job.</p>}
       </div>
     );
   }
+
+  if (isRunning) {
+    return (
+      <div className="mb-4 p-3 rounded-lg border border-neutral-200 dark:border-neutral-800 flex items-center gap-3 flex-wrap">
+        <p className="text-sm font-medium">Suggesting categories… {elapsedSeconds}s</p>
+        <p className="text-xs text-neutral-400">
+          Large batches can take up to a minute or two — it's working, not stuck. Feel free to switch tabs or come
+          back later; the result will be waiting here.
+        </p>
+        <button
+          onClick={dismiss}
+          className="ml-auto px-3 py-1 rounded-md text-xs font-medium text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+        >
+          Hide
+        </button>
+      </div>
+    );
+  }
+
+  if (jobQuery.data?.status === "failed") {
+    return (
+      <div className="mb-4 p-3 rounded-lg border border-neutral-200 dark:border-neutral-800 flex items-center justify-between gap-3">
+        <p className="text-sm text-red-600">Couldn't suggest categories: {jobQuery.data.error ?? "unknown error"}</p>
+        <button
+          onClick={dismiss}
+          className="shrink-0 px-3 py-1 rounded-md text-xs font-medium text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+        >
+          Dismiss
+        </button>
+      </div>
+    );
+  }
+
+  const suggestions = jobQuery.data?.suggestions ?? [];
 
   if (suggestions.length === 0) {
     return (
       <div className="mb-4 p-3 rounded-lg border border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
         <p className="text-sm text-neutral-400">Nothing to categorize.</p>
         <button
-          onClick={() => setSuggestions(null)}
+          onClick={dismiss}
           className="px-3 py-1 rounded-md text-xs font-medium text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
         >
           Dismiss
@@ -118,7 +175,7 @@ export function CategorySuggestions({ bookmarkTitleById }: CategorySuggestionsPr
             Apply
           </button>
           <button
-            onClick={() => setSuggestions(null)}
+            onClick={dismiss}
             className="px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 text-xs font-medium hover:bg-neutral-50 dark:hover:bg-neutral-900"
           >
             Dismiss

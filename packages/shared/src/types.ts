@@ -195,10 +195,28 @@ export const categorySuggestionSchema = z.object({
 });
 export type CategorySuggestion = z.infer<typeof categorySuggestionSchema>;
 
-export const suggestCategoriesResponseSchema = z.object({
-  suggestions: z.array(categorySuggestionSchema),
+// A suggestion run is a persisted job (like ImportJob below), not a single request/response —
+// the model call can take a minute or two, so the result needs somewhere to live that outlives
+// one HTTP connection, letting the caller leave the page and come back to it.
+export const startSuggestCategoriesResponseSchema = z.object({
+  jobId: z.number(),
 });
-export type SuggestCategoriesResponse = z.infer<typeof suggestCategoriesResponseSchema>;
+export type StartSuggestCategoriesResponse = z.infer<typeof startSuggestCategoriesResponseSchema>;
+
+export const categorySuggestionJobStatusSchema = z.enum(["running", "completed", "failed"]);
+export type CategorySuggestionJobStatus = z.infer<typeof categorySuggestionJobStatusSchema>;
+
+export const categorySuggestionJobSchema = z.object({
+  id: z.number(),
+  status: categorySuggestionJobStatusSchema,
+  scope: suggestCategoriesScopeSchema,
+  suggestions: z.array(categorySuggestionSchema).nullable(),
+  error: z.string().nullable(),
+  // So a client that starts watching this job after it was already running (e.g. the page was
+  // closed and reopened) can show real elapsed time, not time-since-I-started-watching.
+  createdAt: z.string(),
+});
+export type CategorySuggestionJob = z.infer<typeof categorySuggestionJobSchema>;
 
 export const applyCategoriesRequestSchema = z.object({
   assignments: z.array(z.object({ id: z.number(), category: z.string().min(1) })).min(1),

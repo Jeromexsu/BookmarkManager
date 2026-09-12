@@ -2,14 +2,15 @@ import {
   type Bookmark,
   type UpdateBookmarkRequest,
   type ShortcutCandidate,
-  type CategorySuggestion,
   type SuggestCategoriesScope,
   type RenameCategoryResponse,
+  type CategorySuggestionJob,
   listBookmarksResponseSchema,
   bookmarkSchema,
   nameListResponseSchema,
   detectShortcutsResponseSchema,
-  suggestCategoriesResponseSchema,
+  startSuggestCategoriesResponseSchema,
+  categorySuggestionJobSchema,
   renameCategoryResponseSchema,
   suggestTitleResponseSchema,
 } from "@bookmark-manager/shared";
@@ -58,14 +59,20 @@ async function confirmShortcuts(ids: number[]): Promise<void> {
   if (!res.ok) throw new Error(`Failed to confirm shortcuts: ${res.status}`);
 }
 
-async function suggestCategories(scope: SuggestCategoriesScope): Promise<CategorySuggestion[]> {
+async function startSuggestCategories(scope: SuggestCategoriesScope): Promise<number> {
   const res = await fetch("/api/bookmarks/suggest-categories", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ scope }),
   });
-  if (!res.ok) throw new Error(`Failed to suggest categories: ${res.status}`);
-  return suggestCategoriesResponseSchema.parse(await res.json()).suggestions;
+  if (!res.ok) throw new Error(`Failed to start category suggestion: ${res.status}`);
+  return startSuggestCategoriesResponseSchema.parse(await res.json()).jobId;
+}
+
+async function fetchCategorySuggestionJob(jobId: number): Promise<CategorySuggestionJob> {
+  const res = await fetch(`/api/bookmarks/suggest-categories/${jobId}`);
+  if (!res.ok) throw new Error(`Failed to load suggestion job: ${res.status}`);
+  return categorySuggestionJobSchema.parse(await res.json());
 }
 
 async function applyCategories(assignments: { id: number; category: string }[]): Promise<void> {
@@ -157,8 +164,18 @@ export function useConfirmShortcuts() {
   });
 }
 
-export function useSuggestCategories() {
-  return useMutation({ mutationFn: suggestCategories });
+export function useStartSuggestCategories() {
+  return useMutation({ mutationFn: startSuggestCategories });
+}
+
+export function useCategorySuggestionJob(jobId: number | null) {
+  return useQuery({
+    queryKey: ["categorySuggestionJob", jobId],
+    queryFn: () => fetchCategorySuggestionJob(jobId!),
+    enabled: jobId !== null,
+    // Stops polling once the job leaves "running" — completed/failed results don't change.
+    refetchInterval: (query) => (query.state.data?.status === "running" ? 2000 : false),
+  });
 }
 
 export function useApplyCategories() {

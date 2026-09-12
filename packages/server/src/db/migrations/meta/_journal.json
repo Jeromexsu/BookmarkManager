@@ -29,6 +29,13 @@
       "when": 1789138770294,
       "tag": "0003_status_tagged_to_resolved",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789185303248,
+      "tag": "0004_category_suggestion_jobs",
+      "breakpoints": true
     }
   ]
 }
