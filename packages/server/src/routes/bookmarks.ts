@@ -29,7 +29,7 @@ import {
 import { generateTags } from "../ai/tagging.js";
 import { classifyShortcut } from "../ai/classify.js";
 import { suggestTitle } from "../ai/title.js";
-import { pickCategoryTaxonomy, classifyChunk } from "../ai/categorize.js";
+import { classifyChunk } from "../ai/categorize.js";
 
 async function hydrateBookmarks(rows: (typeof bookmarks.$inferSelect)[]): Promise<Bookmark[]> {
   if (rows.length === 0) return [];
@@ -152,17 +152,23 @@ const CATEGORY_SUGGESTION_CONCURRENCY = 4;
 // this row (rather than only ever returning it in one HTTP response) is what lets the caller
 // leave the page and come back to find it.
 //
-// Two passes, not one call for the whole set: first decide the taxonomy (small output — just
-// category names), then classify chunks of bookmarks against that fixed list concurrently (each
-// chunk's output is only its own ids, not everyone's). Keeps any one call's output small and
-// bounds a slow/failed chunk's damage to just that chunk instead of the whole run.
+// Classifies against the *current* category list as-is — it does not propose new categories or
+// otherwise reshape the list (that's a separate, deliberate "reorganize categories" decision).
+// Chunked and concurrent so any one call's output stays small and a slow/failed chunk only
+// costs that chunk, not the whole run.
 async function runCategorySuggestionJob(jobId: number, scope: SuggestCategoriesScope) {
   try {
-    const baseCondition = and(eq(bookmarks.type, "reference"), eq(bookmarks.status, "resolved"));
+    // Both reference and shortcut bookmarks are eligible — categorization isn't a
+    // reference-only concern, shortcuts carry a category too.
+    const baseCondition = and(inArray(bookmarks.type, ["reference", "shortcut"]), eq(bookmarks.status, "resolved"));
     const condition = scope === "all" ? baseCondition : and(baseCondition, isNull(bookmarks.categoryId));
     const rows = await db.select().from(bookmarks).where(condition);
 
-    if (rows.length === 0) {
+    const categoryList = await db
+      .select({ name: categories.name, description: categories.description })
+      .from(categories);
+
+    if (rows.length === 0 || categoryList.length === 0) {
       await db
         .update(categorySuggestionJobs)
         .set({ status: "completed", suggestions: [] })
@@ -183,10 +189,7 @@ async function runCategorySuggestionJob(jobId: number, scope: SuggestCategoriesS
       tagsByBookmark.set(bookmarkId, list);
     }
 
-    const existingCategories = (await db.select().from(categories)).map((c) => c.name);
     const items = rows.map((r) => ({ id: r.id, title: r.title, tags: tagsByBookmark.get(r.id) ?? [] }));
-
-    const categoryNames = await pickCategoryTaxonomy(items, existingCategories);
 
     const chunks: (typeof items)[] = [];
     for (let i = 0; i < items.length; i += CATEGORY_SUGGESTION_CHUNK_SIZE) {
@@ -201,7 +204,7 @@ async function runCategorySuggestionJob(jobId: number, scope: SuggestCategoriesS
       while (queue.length > 0) {
         const chunk = queue.shift()!;
         try {
-          const result = await classifyChunk(chunk, categoryNames);
+          const result = await classifyChunk(chunk, categoryList);
           succeededChunks++;
           for (const [category, bookmarkIds] of result) {
             const list = merged.get(category) ?? [];

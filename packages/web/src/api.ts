@@ -6,6 +6,7 @@ import {
   type RenameProjectResponse,
   type CategorySuggestionJob,
   type DetectShortcutsJob,
+  type CategoryInfo,
   listBookmarksResponseSchema,
   bookmarkSchema,
   nameListResponseSchema,
@@ -17,6 +18,8 @@ import {
   detectShortcutsJobSchema,
   clearShortcutCacheResponseSchema,
   renameProjectResponseSchema,
+  listCategoriesFullResponseSchema,
+  categoryInfoSchema,
 } from "@bookmark-manager/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -127,6 +130,32 @@ async function deleteCategory(name: string): Promise<void> {
     body: JSON.stringify({ name }),
   });
   if (!res.ok) throw new Error(`Failed to delete category: ${res.status}`);
+}
+
+async function listCategoriesFull(): Promise<CategoryInfo[]> {
+  const res = await fetch("/api/categories/full");
+  if (!res.ok) throw new Error(`Failed to load categories: ${res.status}`);
+  return listCategoriesFullResponseSchema.parse(await res.json()).categories;
+}
+
+async function createCategory(name: string, description?: string): Promise<CategoryInfo> {
+  const res = await fetch("/api/categories", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, description }),
+  });
+  if (!res.ok) throw new Error(`Failed to create category: ${res.status}`);
+  return categoryInfoSchema.parse(await res.json());
+}
+
+async function setCategoryDescription(name: string, description: string): Promise<CategoryInfo> {
+  const res = await fetch("/api/categories/description", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, description }),
+  });
+  if (!res.ok) throw new Error(`Failed to update category description: ${res.status}`);
+  return categoryInfoSchema.parse(await res.json());
 }
 
 async function createProject(name: string): Promise<void> {
@@ -265,6 +294,29 @@ export function useDeleteCategory() {
       queryClient.invalidateQueries({ queryKey: bookmarksKey });
       queryClient.invalidateQueries({ queryKey: ["categories"] });
     },
+  });
+}
+
+export function useCategoriesFull() {
+  return useQuery({ queryKey: ["categoriesFull"], queryFn: listCategoriesFull });
+}
+
+export function useCreateCategory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, description }: { name: string; description?: string }) => createCategory(name, description),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["categories"] });
+      queryClient.invalidateQueries({ queryKey: ["categoriesFull"] });
+    },
+  });
+}
+
+export function useSetCategoryDescription() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, description }: { name: string; description: string }) => setCategoryDescription(name, description),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["categoriesFull"] }),
   });
 }
 

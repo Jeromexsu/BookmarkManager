@@ -1,8 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Bookmark } from "@bookmark-manager/shared";
-import { useClearShortcutCache, useConfirmShortcuts, useDetectShortcutsJob, useStartDetectShortcuts } from "./api";
+import {
+  useCategoriesFull,
+  useClearShortcutCache,
+  useConfirmShortcuts,
+  useDetectShortcutsJob,
+  useStartDetectShortcuts,
+} from "./api";
 import { GroupedCardView } from "./GroupedCardView";
 import { ShortcutTile } from "./ShortcutTile";
+import { NewCategoryForm } from "./NewCategoryForm";
 
 // Persisted (not component state) so a detection run survives a tab switch, reload, or closing
 // and reopening the page — same reasoning as CategorySuggestions' STORAGE_KEY.
@@ -30,6 +37,11 @@ export function ShortcutView({ shortcuts, categories }: ShortcutViewProps) {
   const [jobId, setJobId] = useState<number | null>(readStoredJobId);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const { data: categoriesFull = [] } = useCategoriesFull();
+  const categoryDescriptions = useMemo(
+    () => new Map(categoriesFull.map((c) => [c.name, c.description])),
+    [categoriesFull]
+  );
 
   const jobQuery = useDetectShortcutsJob(jobId);
   const isRunning = jobId !== null && jobQuery.data?.status !== "completed" && jobQuery.data?.status !== "failed";
@@ -110,21 +122,24 @@ export function ShortcutView({ shortcuts, categories }: ShortcutViewProps) {
         )}
       </div>
 
-      <nav className="flex gap-1 bg-neutral-100 dark:bg-neutral-800 rounded-lg p-1 mb-3 w-fit">
-        {(["category", "all"] as const).map((v) => (
-          <button
-            key={v}
-            onClick={() => setSubView(v)}
-            className={`text-xs font-semibold px-3 py-1.5 rounded-md capitalize transition ${
-              subView === v
-                ? "bg-white dark:bg-neutral-950 shadow-sm"
-                : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
-            }`}
-          >
-            {v}
-          </button>
-        ))}
-      </nav>
+      <div className="flex items-center justify-between mb-3">
+        <nav className="flex gap-1 bg-neutral-100 dark:bg-neutral-800 rounded-lg p-1 w-fit">
+          {(["category", "all"] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setSubView(v)}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-md capitalize transition ${
+                subView === v
+                  ? "bg-white dark:bg-neutral-950 shadow-sm"
+                  : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+              }`}
+            >
+              {v}
+            </button>
+          ))}
+        </nav>
+        {subView === "category" && <NewCategoryForm />}
+      </div>
 
       {clearCacheMutation.isSuccess && (
         <p className="text-xs text-neutral-400 mb-4">
@@ -219,6 +234,7 @@ export function ShortcutView({ shortcuts, categories }: ShortcutViewProps) {
           // (often long) lists, there's no real cost to always showing every group open.
           autoExpand
           categories={categories}
+          categoryDescriptions={categoryDescriptions}
           renderItems={(items, moveToCategories) => (
             <div className="flex flex-wrap gap-3 pl-6 pb-3">
               {items.map((s) => (

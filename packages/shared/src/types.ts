@@ -263,6 +263,33 @@ export const deleteCategoryRequestSchema = z.object({
 });
 export type DeleteCategoryRequest = z.infer<typeof deleteCategoryRequestSchema>;
 
+// Full category info (name + description), distinct from the plain name list GET /categories
+// already returns for the many places (datalists, "Move to" dropdowns) that only need names —
+// this is for the places that actually use the description: the category management UI and the
+// classify step's own context for the model.
+export const categoryInfoSchema = z.object({
+  name: z.string(),
+  description: z.string().nullable(),
+});
+export type CategoryInfo = z.infer<typeof categoryInfoSchema>;
+
+export const listCategoriesFullResponseSchema = z.object({
+  categories: z.array(categoryInfoSchema),
+});
+export type ListCategoriesFullResponse = z.infer<typeof listCategoriesFullResponseSchema>;
+
+export const createCategoryRequestSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().optional(),
+});
+export type CreateCategoryRequest = z.infer<typeof createCategoryRequestSchema>;
+
+export const setCategoryDescriptionRequestSchema = z.object({
+  name: z.string().min(1),
+  description: z.string(),
+});
+export type SetCategoryDescriptionRequest = z.infer<typeof setCategoryDescriptionRequestSchema>;
+
 // Same addressed-by-name convention as categories above, plus an explicit create — a project
 // can exist with zero bookmarks yet (you make it, then add things to it), unlike a category
 // which only ever comes into being by being set on a bookmark.

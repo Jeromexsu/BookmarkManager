@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import type { Bookmark } from "@bookmark-manager/shared";
 import { BookmarkRow } from "./BookmarkRow";
-import { useDeleteCategory, useRenameCategory } from "./api";
+import { useDeleteCategory, useRenameCategory, useSetCategoryDescription } from "./api";
 
 interface GroupedCardViewProps {
   bookmarks: Bookmark[];
@@ -11,6 +11,8 @@ interface GroupedCardViewProps {
   // Full category name list (unaffected by search/grouping) — used for the per-bookmark
   // "Move to" dropdown and to know what a rename would collide/merge with.
   categories?: string[];
+  // Name -> description, so each group header can show what the category is actually for.
+  categoryDescriptions?: Map<string, string | null>;
   // Defaults to a BookmarkRow list (References' shape). ShortcutView passes its own grid of
   // ShortcutTile instead — the grouping/rename/remove/expand behavior above is identical either
   // way, only how a group's items actually render differs.
@@ -42,13 +44,17 @@ export function GroupedCardView({
   bookmarks,
   autoExpand = false,
   categories,
+  categoryDescriptions,
   renderItems = defaultRenderItems,
 }: GroupedCardViewProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [renamingKey, setRenamingKey] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [editingDescKey, setEditingDescKey] = useState<string | null>(null);
+  const [descDraft, setDescDraft] = useState("");
   const renameMutation = useRenameCategory();
   const deleteMutation = useDeleteCategory();
+  const descriptionMutation = useSetCategoryDescription();
 
   const groups = buildGroups(bookmarks);
   const sortedKeys = [...groups.keys()].sort((a, b) => {
@@ -82,6 +88,19 @@ export function GroupedCardView({
   function handleDeleteCategory(key: string, count: number) {
     if (confirm(`Remove category "${key}"? Its ${count} bookmark${count === 1 ? "" : "s"} will become Uncategorized.`)) {
       deleteMutation.mutate(key);
+    }
+  }
+
+  function startEditDesc(key: string) {
+    setEditingDescKey(key);
+    setDescDraft(categoryDescriptions?.get(key) ?? "");
+  }
+
+  function commitDesc(key: string) {
+    const value = descDraft.trim();
+    setEditingDescKey(null);
+    if (value !== (categoryDescriptions?.get(key) ?? "")) {
+      descriptionMutation.mutate({ name: key, description: value });
     }
   }
 
@@ -130,6 +149,12 @@ export function GroupedCardView({
               {isManageable && !isRenaming && (
                 <div className="flex items-center gap-1 shrink-0">
                   <button
+                    onClick={() => startEditDesc(key)}
+                    className="text-xs px-2 py-1 rounded-md text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                  >
+                    Description
+                  </button>
+                  <button
                     onClick={() => startRename(key)}
                     className="text-xs px-2 py-1 rounded-md text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
                   >
@@ -144,6 +169,25 @@ export function GroupedCardView({
                 </div>
               )}
             </div>
+
+            {isManageable && editingDescKey === key && (
+              <input
+                autoFocus
+                value={descDraft}
+                onChange={(e) => setDescDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitDesc(key);
+                  if (e.key === "Escape") setEditingDescKey(null);
+                }}
+                onBlur={() => commitDesc(key)}
+                placeholder="What's this category for?"
+                className="w-full text-xs px-2 py-1 mb-1 rounded-md border border-blue-400 outline-none bg-white dark:bg-neutral-950 text-neutral-600 dark:text-neutral-400"
+              />
+            )}
+            {isManageable && editingDescKey !== key && categoryDescriptions?.get(key) && (
+              <p className="text-xs text-neutral-400 px-2 mb-1 truncate">{categoryDescriptions.get(key)}</p>
+            )}
+
             {isOpen && renderItems(items, moveToCategories)}
           </div>
         );

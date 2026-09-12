@@ -32,10 +32,14 @@ const vector = customType<{ data: number[]; driverData: string }>({
 });
 
 // A broad, user-only grouping (e.g. lifestyle/coding/travel). AI-assisted suggestions are a
-// later "management" feature, not part of the extension's collection flow.
+// "management" feature, not part of the extension's collection flow.
 export const categories = pgTable("categories", {
   id: serial("id").primaryKey(),
   name: text("name").notNull().unique(),
+  // Short, optional — disambiguates near-synonym categories for the user at a glance, and
+  // gives the AI real grounding when deciding whether a bookmark fits an existing category or
+  // needs a new one (a bare name is a weak signal on its own).
+  description: text("description"),
 });
 
 // A bundle of deep-coupled bookmarks, always user-specified — never AI-generated.
