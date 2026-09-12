@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Bookmark } from "@bookmark-manager/shared";
 import { BookmarkRow } from "./BookmarkRow";
-import { Favicon } from "./Favicon";
+import { ShortcutTile } from "./ShortcutTile";
 
 interface ProjectsViewProps {
   // Resolved bookmarks of either type — a project is a container that collects references
@@ -104,16 +104,7 @@ export function ProjectsView({ bookmarks }: ProjectsViewProps) {
                         </p>
                         <div className="flex flex-wrap gap-3">
                           {shortcuts.map((s) => (
-                            <a
-                              key={s.id}
-                              href={s.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="w-24 flex flex-col items-center gap-1.5 p-3 rounded-lg border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                            >
-                              <Favicon favicon={s.favicon} title={s.title} size="md" />
-                              <span className="text-xs text-center truncate w-full">{s.title}</span>
-                            </a>
+                            <ShortcutTile key={s.id} bookmark={s} />
                           ))}
                         </div>
                       </div>

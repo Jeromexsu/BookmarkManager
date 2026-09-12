@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { Bookmark } from "@bookmark-manager/shared";
 import { BookmarkRow } from "./BookmarkRow";
 import { useDeleteCategory, useRenameCategory } from "./api";
@@ -11,6 +11,20 @@ interface GroupedCardViewProps {
   // Full category name list (unaffected by search/grouping) — used for the per-bookmark
   // "Move to" dropdown and to know what a rename would collide/merge with.
   categories?: string[];
+  // Defaults to a BookmarkRow list (References' shape). ShortcutView passes its own grid of
+  // ShortcutTile instead — the grouping/rename/remove/expand behavior above is identical either
+  // way, only how a group's items actually render differs.
+  renderItems?: (items: Bookmark[], moveToCategories: string[]) => ReactNode;
+}
+
+function defaultRenderItems(items: Bookmark[], moveToCategories: string[]): ReactNode {
+  return (
+    <ul className="space-y-2 pl-6 pb-3">
+      {items.map((b) => (
+        <BookmarkRow key={b.id} bookmark={b} moveToCategories={moveToCategories} />
+      ))}
+    </ul>
+  );
 }
 
 function buildGroups(bookmarks: Bookmark[]): Map<string, Bookmark[]> {
@@ -24,7 +38,12 @@ function buildGroups(bookmarks: Bookmark[]): Map<string, Bookmark[]> {
   return groups;
 }
 
-export function GroupedCardView({ bookmarks, autoExpand = false, categories }: GroupedCardViewProps) {
+export function GroupedCardView({
+  bookmarks,
+  autoExpand = false,
+  categories,
+  renderItems = defaultRenderItems,
+}: GroupedCardViewProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [renamingKey, setRenamingKey] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -125,13 +144,7 @@ export function GroupedCardView({ bookmarks, autoExpand = false, categories }: G
                 </div>
               )}
             </div>
-            {isOpen && (
-              <ul className="space-y-2 pl-6 pb-3">
-                {items.map((b) => (
-                  <BookmarkRow key={b.id} bookmark={b} moveToCategories={moveToCategories} />
-                ))}
-              </ul>
-            )}
+            {isOpen && renderItems(items, moveToCategories)}
           </div>
         );
       })}

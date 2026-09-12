@@ -74,7 +74,7 @@ export function App() {
       </datalist>
 
       {view === "references" && <ReferenceView bookmarks={references} categories={categories} />}
-      {view === "shortcuts" && <ShortcutView shortcuts={shortcuts} />}
+      {view === "shortcuts" && <ShortcutView shortcuts={shortcuts} categories={categories} />}
       {view === "projects" && <ProjectsView bookmarks={resolved} />}
       {view === "pending" && <PendingView pending={pending} />}
     </div>

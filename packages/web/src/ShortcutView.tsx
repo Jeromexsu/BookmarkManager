@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Bookmark } from "@bookmark-manager/shared";
-import { useClearShortcutCache, useConfirmShortcuts, useDetectShortcutsJob, useStartDetectShortcuts, useUpdateBookmark } from "./api";
-import { Favicon } from "./Favicon";
+import { useClearShortcutCache, useConfirmShortcuts, useDetectShortcutsJob, useStartDetectShortcuts } from "./api";
+import { GroupedCardView } from "./GroupedCardView";
+import { ShortcutTile } from "./ShortcutTile";
 
 // Persisted (not component state) so a detection run survives a tab switch, reload, or closing
 // and reopening the page — same reasoning as CategorySuggestions' STORAGE_KEY.
@@ -13,22 +14,36 @@ function readStoredJobId(): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+type SubView = "category" | "all";
+
 interface ShortcutViewProps {
   shortcuts: Bookmark[];
+  categories: string[];
 }
 
-export function ShortcutView({ shortcuts }: ShortcutViewProps) {
+export function ShortcutView({ shortcuts, categories }: ShortcutViewProps) {
   const startMutation = useStartDetectShortcuts();
   const confirmMutation = useConfirmShortcuts();
-  const updateMutation = useUpdateBookmark();
   const clearCacheMutation = useClearShortcutCache();
 
+  const [subView, setSubView] = useState<SubView>("category");
+  const [query, setQuery] = useState("");
   const [jobId, setJobId] = useState<number | null>(readStoredJobId);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const jobQuery = useDetectShortcutsJob(jobId);
   const isRunning = jobId !== null && jobQuery.data?.status !== "completed" && jobQuery.data?.status !== "failed";
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return shortcuts;
+    return shortcuts.filter((b) =>
+      [b.title, b.url, b.category, b.project, ...b.tags]
+        .filter((field): field is string => Boolean(field))
+        .some((field) => field.toLowerCase().includes(q))
+    );
+  }, [shortcuts, query]);
 
   // Anchored to the job's real createdAt, not this component's mount time, so reopening the
   // page after a while shows true elapsed time rather than restarting from zero.
@@ -82,44 +97,59 @@ export function ShortcutView({ shortcuts }: ShortcutViewProps) {
     dismiss();
   }
 
-  function handleRevert(id: number) {
-    updateMutation.mutate({ id, patch: { type: "reference" } });
-  }
-
   const candidates = jobQuery.data?.status === "completed" ? jobQuery.data.candidates : null;
 
   return (
     <div className="flex-1 min-w-0 p-4 overflow-y-auto">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-sm font-semibold text-neutral-500">{shortcuts.length} shortcuts</h2>
-        <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 mb-3">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search shortcuts…"
+          className="flex-1 px-3 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-sm outline-none focus:border-blue-500"
+        />
+        <button
+          onClick={() => clearCacheMutation.mutate()}
+          disabled={clearCacheMutation.isPending}
+          title="Forget which reference bookmarks were already ruled out, so the next scan reconsiders everything"
+          className="shrink-0 px-3 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 text-xs font-medium text-neutral-500 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-50"
+        >
+          {clearCacheMutation.isPending ? "Clearing…" : "Clear scan cache"}
+        </button>
+        {jobId === null && (
           <button
-            onClick={() => clearCacheMutation.mutate()}
-            disabled={clearCacheMutation.isPending}
-            title="Forget which reference bookmarks were already ruled out, so the next scan reconsiders everything"
-            className="px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 text-xs font-medium text-neutral-500 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-50"
+            onClick={handleDetect}
+            disabled={startMutation.isPending}
+            className="shrink-0 px-3 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 text-sm font-medium hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-50"
           >
-            {clearCacheMutation.isPending ? "Clearing…" : "Clear scan cache"}
+            Detect shortcuts
           </button>
-          {jobId === null && (
-            <button
-              onClick={handleDetect}
-              disabled={startMutation.isPending}
-              className="px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 text-sm font-medium hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-50"
-            >
-              Detect shortcuts
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
+      <nav className="flex gap-1 bg-neutral-100 dark:bg-neutral-800 rounded-lg p-1 mb-3 w-fit">
+        {(["category", "all"] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setSubView(v)}
+            className={`text-xs font-semibold px-3 py-1.5 rounded-md capitalize transition ${
+              subView === v
+                ? "bg-white dark:bg-neutral-950 shadow-sm"
+                : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+            }`}
+          >
+            {v}
+          </button>
+        ))}
+      </nav>
+
       {clearCacheMutation.isSuccess && (
-        <p className="text-xs text-neutral-400 -mt-2 mb-4">
+        <p className="text-xs text-neutral-400 mb-4">
           Cleared {clearCacheMutation.data} bookmark{clearCacheMutation.data === 1 ? "" : "s"} from the scan cache —
           they'll be reconsidered on the next scan.
         </p>
       )}
-      {clearCacheMutation.isError && <p className="text-xs text-red-600 -mt-2 mb-4">Couldn't clear the scan cache.</p>}
+      {clearCacheMutation.isError && <p className="text-xs text-red-600 mb-4">Couldn't clear the scan cache.</p>}
 
       {startMutation.isError && <p className="text-xs text-red-600 mb-4">Couldn't start shortcut detection.</p>}
 
@@ -182,10 +212,7 @@ export function ShortcutView({ shortcuts }: ShortcutViewProps) {
                 Add {checked.size} shortcut{checked.size === 1 ? "" : "s"}
               </button>
             )}
-            <button
-              onClick={dismiss}
-              className="px-3 py-1.5 rounded-md text-sm text-neutral-500 hover:text-neutral-700"
-            >
+            <button onClick={dismiss} className="px-3 py-1.5 rounded-md text-sm text-neutral-500 hover:text-neutral-700">
               Dismiss
             </button>
           </div>
@@ -196,31 +223,25 @@ export function ShortcutView({ shortcuts }: ShortcutViewProps) {
         <p className="text-sm text-neutral-400 text-center py-12">
           No shortcuts yet — click "Detect shortcuts" to find candidates among your bookmarks.
         </p>
-      ) : (
+      ) : subView === "all" ? (
         <div className="flex flex-wrap gap-3">
-          {shortcuts.map((s) => (
-            <a
-              key={s.id}
-              href={s.url}
-              target="_blank"
-              rel="noreferrer"
-              className="group relative w-24 flex flex-col items-center gap-1.5 p-3 rounded-lg border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900"
-            >
-              <button
-                onClick={(e) => {
-                  e.preventDefault();
-                  handleRevert(s.id);
-                }}
-                className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 text-neutral-400 hover:text-red-600 text-xs"
-                title="Not a shortcut"
-              >
-                ×
-              </button>
-              <Favicon favicon={s.favicon} title={s.title} size="md" />
-              <span className="text-xs text-center truncate w-full">{s.title}</span>
-            </a>
+          {filtered.map((s) => (
+            <ShortcutTile key={s.id} bookmark={s} />
           ))}
         </div>
+      ) : (
+        <GroupedCardView
+          bookmarks={filtered}
+          autoExpand={query.trim() !== ""}
+          categories={categories}
+          renderItems={(items, moveToCategories) => (
+            <div className="flex flex-wrap gap-3 pl-6 pb-3">
+              {items.map((s) => (
+                <ShortcutTile key={s.id} bookmark={s} moveToCategories={moveToCategories} />
+              ))}
+            </div>
+          )}
+        />
       )}
     </div>
   );
