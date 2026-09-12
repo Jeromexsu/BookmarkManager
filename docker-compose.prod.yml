@@ -1,11 +1,13 @@
 # Standalone production stack — not an override of docker-compose.yml (that one publishes
-# Postgres's port and has no TLS/reverse-proxy story, both fine for local dev, neither fine for
-# a public VPS). Deliberately self-contained rather than layered with `-f` on top of the base
-# file: Compose concatenates list fields like `ports` across layered files instead of replacing
-# them, so an override that tries to *remove* a port mapping can silently leave the original
-# exposed anyway. Easier to audit as one file for something security-sensitive like this.
+# Postgres's port straight to the host, fine for local dev, not for a public VPS).
+# Deliberately self-contained rather than layered with `-f` on top of the base file: Compose
+# concatenates list fields like `ports` across layered files instead of replacing them, so an
+# override that tries to *remove* a port mapping can silently leave the original exposed
+# anyway. Easier to audit as one file for something security-sensitive like this.
 #
-# Usage: see DEPLOY.md.
+# No reverse proxy / TLS termination in here — that's assumed to already exist on the host
+# (nginx, in this deploy) fronting other things too. `app` binds to 127.0.0.1 only, for that
+# existing proxy to reach; nothing public talks to this stack directly. See DEPLOY.md.
 
 services:
   db:
@@ -37,30 +39,10 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       PORT: 3001
-    # Reachable only from `caddy` over the compose network — not published to the host, so
-    # the only way in from outside this machine is through Caddy's TLS-terminated proxy.
-    expose:
-      - "3001"
-
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    depends_on:
-      - app
-    environment:
-      # A real domain gets automatic Let's Encrypt HTTPS; left unset, Caddy falls back to
-      # plain HTTP on "localhost" — fine for kicking the tires by IP before DNS is set up,
-      # but put a domain here before you rely on this for anything real. See DEPLOY.md.
-      DOMAIN: ${DOMAIN:-localhost}
+    # Bound to loopback only — reachable from the host's own nginx, not from outside this
+    # machine. nginx is what actually terminates TLS and faces the public internet.
     ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
+      - "127.0.0.1:${APP_PORT:-3001}:3001"
 
 volumes:
   db-data:
-  caddy-data:
-  caddy-config:
