@@ -7,6 +7,7 @@ import {
   confirmShortcutsRequestSchema,
   suggestCategoriesRequestSchema,
   applyCategoriesRequestSchema,
+  suggestTitleRequestSchema,
   type Bookmark,
   type BookmarkConflict,
   type ShortcutCandidate,
@@ -16,6 +17,7 @@ import { db } from "../db/client.js";
 import { bookmarks, tags, bookmarkTags, categories, projects } from "../db/schema.js";
 import { generateTags } from "../ai/tagging.js";
 import { classifyShortcut } from "../ai/classify.js";
+import { suggestTitle } from "../ai/title.js";
 import { suggestCategories } from "../ai/categorize.js";
 
 async function hydrateBookmarks(rows: (typeof bookmarks.$inferSelect)[]): Promise<Bookmark[]> {
@@ -277,6 +279,23 @@ export async function bookmarkRoutes(app: FastifyInstance) {
     } catch (err) {
       app.log.error(err, "Preview tagging failed");
       return reply.code(502).send({ error: "Failed to generate tags" });
+    }
+  });
+
+  // Also stateless — the caller already has the content on the Bookmark it loaded, no DB
+  // lookup needed. Never saved automatically; the client decides whether to use it.
+  app.post("/bookmarks/suggest-title", async (request, reply) => {
+    const parsed = suggestTitleRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.flatten() });
+    }
+
+    try {
+      const title = await suggestTitle(parsed.data.title, parsed.data.content);
+      return { title };
+    } catch (err) {
+      app.log.error(err, "Title suggestion failed");
+      return reply.code(502).send({ error: "Failed to suggest a title" });
     }
   });
 

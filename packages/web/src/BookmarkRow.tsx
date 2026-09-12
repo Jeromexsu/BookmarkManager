@@ -1,6 +1,6 @@
 import { useState, type ChangeEvent } from "react";
 import type { Bookmark } from "@bookmark-manager/shared";
-import { useDeleteBookmark, useUpdateBookmark } from "./api";
+import { useDeleteBookmark, useSuggestTitle, useUpdateBookmark } from "./api";
 import { Favicon } from "./Favicon";
 
 interface BookmarkRowProps {
@@ -16,9 +16,12 @@ interface BookmarkRowProps {
 export function BookmarkRow({ bookmark, showResolveActions = false, moveToCategories }: BookmarkRowProps) {
   const updateMutation = useUpdateBookmark();
   const deleteMutation = useDeleteBookmark();
+  const suggestTitleMutation = useSuggestTitle();
   const [tagDraft, setTagDraft] = useState("");
   const [categoryDraft, setCategoryDraft] = useState(bookmark.category ?? "");
   const [projectDraft, setProjectDraft] = useState(bookmark.project ?? "");
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(bookmark.title);
 
   function addTag() {
     const value = tagDraft.trim();
@@ -69,6 +72,25 @@ export function BookmarkRow({ bookmark, showResolveActions = false, moveToCatego
     updateMutation.mutate({ id: bookmark.id, patch: { resolved: true } });
   }
 
+  function startEditTitle() {
+    setTitleDraft(bookmark.title);
+    setIsEditingTitle(true);
+  }
+
+  function commitTitle() {
+    setIsEditingTitle(false);
+    const trimmed = titleDraft.trim();
+    if (trimmed && trimmed !== bookmark.title) {
+      updateMutation.mutate({ id: bookmark.id, patch: { title: trimmed } });
+    }
+  }
+
+  async function handleSuggestTitle() {
+    if (!bookmark.content) return;
+    const suggested = await suggestTitleMutation.mutateAsync({ title: bookmark.title, content: bookmark.content });
+    setTitleDraft(suggested);
+  }
+
   return (
     <li className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 flex gap-3">
       <div className="mt-1">
@@ -76,15 +98,50 @@ export function BookmarkRow({ bookmark, showResolveActions = false, moveToCatego
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
-          <a
-            href={bookmark.url}
-            target="_blank"
-            rel="noreferrer"
-            className="font-semibold text-sm hover:underline truncate"
-          >
-            {bookmark.title}
-          </a>
+          {isEditingTitle ? (
+            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+              <input
+                autoFocus
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitTitle();
+                  if (e.key === "Escape") setIsEditingTitle(false);
+                }}
+                onBlur={commitTitle}
+                className="flex-1 min-w-0 font-semibold text-sm px-1.5 py-0.5 rounded border border-blue-400 outline-none bg-white dark:bg-neutral-950"
+              />
+              {bookmark.content && (
+                <button
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={handleSuggestTitle}
+                  disabled={suggestTitleMutation.isPending}
+                  title="Suggest a title from the page content"
+                  className="shrink-0 text-xs px-2 py-1 rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-500 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-50 whitespace-nowrap"
+                >
+                  {suggestTitleMutation.isPending ? "Suggesting…" : "Suggest"}
+                </button>
+              )}
+            </div>
+          ) : (
+            <a
+              href={bookmark.url}
+              target="_blank"
+              rel="noreferrer"
+              className="font-semibold text-sm hover:underline truncate"
+            >
+              {bookmark.title}
+            </a>
+          )}
           <div className="flex items-center gap-2 shrink-0">
+            {!isEditingTitle && (
+              <button
+                onClick={startEditTitle}
+                className="text-xs px-2 py-1 rounded-md text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+              >
+                Rename
+              </button>
+            )}
             {showResolveActions && (
               <>
                 <button
@@ -141,6 +198,9 @@ export function BookmarkRow({ bookmark, showResolveActions = false, moveToCatego
               ))}
             </select>
           )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
           <input
             list="project-options"
             value={projectDraft}
@@ -149,6 +209,9 @@ export function BookmarkRow({ bookmark, showResolveActions = false, moveToCatego
             placeholder="Project"
             className="text-xs px-2 py-0.5 rounded-full bg-violet-50 text-violet-800 dark:bg-violet-950 dark:text-violet-300 outline-none w-24 placeholder:text-violet-400"
           />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
           {bookmark.tags.map((tag) => (
             <span
               key={tag}

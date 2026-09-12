@@ -99,6 +99,19 @@ export const previewBookmarkResponseSchema = z.object({
 });
 export type PreviewBookmarkResponse = z.infer<typeof previewBookmarkResponseSchema>;
 
+// Stateless, like /bookmarks/preview — the caller already has the content (it's on the
+// Bookmark they loaded), so no need to look it up server-side again.
+export const suggestTitleRequestSchema = z.object({
+  title: z.string(),
+  content: z.string().min(1),
+});
+export type SuggestTitleRequest = z.infer<typeof suggestTitleRequestSchema>;
+
+export const suggestTitleResponseSchema = z.object({
+  title: z.string(),
+});
+export type SuggestTitleResponse = z.infer<typeof suggestTitleResponseSchema>;
+
 // Shared by GET /api/categories and GET /api/projects — both just list existing names
 // so a client can offer "pick existing or type a new one."
 export const nameListResponseSchema = z.object({

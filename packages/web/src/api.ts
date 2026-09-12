@@ -11,6 +11,7 @@ import {
   detectShortcutsResponseSchema,
   suggestCategoriesResponseSchema,
   renameCategoryResponseSchema,
+  suggestTitleResponseSchema,
 } from "@bookmark-manager/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -84,6 +85,16 @@ async function renameCategory(from: string, to: string): Promise<RenameCategoryR
   });
   if (!res.ok) throw new Error(`Failed to rename category: ${res.status}`);
   return renameCategoryResponseSchema.parse(await res.json());
+}
+
+async function suggestTitle(title: string, content: string): Promise<string> {
+  const res = await fetch("/api/bookmarks/suggest-title", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, content }),
+  });
+  if (!res.ok) throw new Error(`Failed to suggest title: ${res.status}`);
+  return suggestTitleResponseSchema.parse(await res.json()).title;
 }
 
 async function deleteCategory(name: string): Promise<void> {
@@ -180,5 +191,11 @@ export function useDeleteCategory() {
       queryClient.invalidateQueries({ queryKey: bookmarksKey });
       queryClient.invalidateQueries({ queryKey: ["categories"] });
     },
+  });
+}
+
+export function useSuggestTitle() {
+  return useMutation({
+    mutationFn: ({ title, content }: { title: string; content: string }) => suggestTitle(title, content),
   });
 }
