@@ -11,8 +11,11 @@ day.
 **This file is a handover doc as much as a README** — it captures not just what exists
 but *why*, so a fresh session (or a fresh you) can pick this up without re-deriving
 decisions that were already made deliberately. It was substantially rewritten
-2026-09-12 after a long session that touched nearly every part of the system —
-treat this version, not memory of an older one, as current.
+2026-09-12, twice — once mid-session, then again after a second long session the same
+day that centralized category management, shipped the AI taxonomy assistant, rebuilt
+Projects/Pending/the card UI, added one-way sync into the browser's native bookmarks,
+and did a full first production deploy. Treat this version, not memory of an older one,
+as current.
 
 ## Why
 
@@ -87,18 +90,36 @@ distinction right shaped a lot of the later design:
   candidates in bulk, not the only way to reclassify one bookmark.
 - **`category`: user-managed, AI-assisted, never AI-owned.** A broad grouping
   (coding/lifestyle/travel/compliance) — **not reference-only**, shortcuts carry a
-  category too now. Categories are a real, addressable entity
-  (`categories` table: `id`, `name` unique, `description` nullable) with full manual
-  CRUD — create (`POST /categories`), rename with merge-on-collision (`PATCH
-  /categories`), soft-delete (`DELETE /categories` — un-categorizes affected bookmarks,
-  never deletes them), plus an inline-editable short **description** shown under the
-  name in the Category view (disambiguates near-synonyms for the user, and gives the
-  AI classify step real grounding beyond a bare name). The AI's role is **assistive,
-  not authoritative**: it classifies bookmarks into whatever categories already exist
-  (`POST /bookmarks/suggest-categories`, review-then-apply, same as shortcut
-  detection) — it does not invent, rename, or delete categories as a side effect of
-  that. See [Open items](#open-items) for the "AI recommends taxonomy changes,
-  human approves" assistant that's designed but not yet built.
+  category too. Categories are a real, addressable entity (`categories` table: `id`,
+  `name` unique, `description` nullable) with full manual CRUD — create
+  (`POST /categories`), rename with merge-on-collision (`PATCH /categories`),
+  soft-delete (`DELETE /categories` — un-categorizes affected bookmarks, never deletes
+  them), plus a short **description** (disambiguates near-synonyms for the user, and
+  gives every AI call that touches categories real grounding beyond a bare name).
+  **All of that CRUD lives in exactly one place now: the Settings tab**
+  (`SettingsView.tsx`) — it used to be scattered across each category-group header in
+  References/Shortcuts (rename/remove/describe inline) plus a separate "+ New category"
+  form in each view's toolbar; that was a real usability complaint mid-session and got
+  consolidated. References/Shortcuts group headers are now read-only display (name,
+  description, bookmark-count pill). The AI has two distinct, deliberately separate
+  roles here:
+  1. **Classification** (assistive, not authoritative) — assigns bookmarks into
+     whatever categories already exist (`POST /bookmarks/suggest-categories`,
+     review-then-apply). Branded "Auto-categorize" in the UI, and **scoped by bookmark
+     type** — the button lives in both References and Shortcuts now, and a run started
+     from one never touches the other (`type` is a required field on the request/job
+     row, not inferred). Never invents, renames, or deletes a category as a side effect.
+  2. **Taxonomy planning** (also assistive) — a single LLM call
+     (`ai/planCategories.ts`) that looks at samples from every current category (name,
+     description, a handful of titles, top tags) plus the "Uncategorized" bucket the
+     same way, and proposes **add / rename / remove / describe** changes to the list
+     itself — this is the "AI recommends taxonomy changes, human approves" assistant
+     that used to be an open item; it's built now (`CategoryPlanReview.tsx` in
+     Settings). Applying an accepted plan is just replaying it through the same
+     create/rename/delete/describe mutations Settings already has — rename before
+     remove before add before describe, so a merge target exists before anything
+     references it, and a rename's cross-validated against the real category list so a
+     hallucinated name gets dropped rather than silently accepted.
 - **`project`: a container, not an attribute — collects references *and* shortcuts
   together.** This was a real mid-session reframing: `project` used to be buried
   inside the References view as if it only applied to references. It's its own
@@ -125,7 +146,21 @@ distinction right shaped a lot of the later design:
   something; adding tags/a summary/converting to a shortcut still resolves it too, as
   a convenience, but none of those are the *only* path anymore. Watch for this
   distinction if extending resolution logic further — "has tags" and "is resolved"
-  are not the same question.
+  are not the same question. (The Pending *view* no longer exposes a manual
+  "Mark resolved" control, though — see `PendingView` below; the field/semantics are
+  unchanged, just the UI surface for it.)
+- **`invalid` (bookmarks): a soft-delete flag, not a real `DELETE`.** Added for the
+  browser-sync feature (see below) — `DELETE /bookmarks/:id` now sets this instead of
+  removing the row, and every normal read (`GET /bookmarks`, both classify jobs, the
+  taxonomy planner's sampling) filters it out. Re-saving a URL that's currently
+  `invalid` (extension save, or bulk import hitting the same URL) revives it — clears
+  the flag as part of the normal resolve/merge path, same PR that added the column.
+- **`updatedAt` (bookmarks): DB-trigger-maintained, not application-set.** A Postgres
+  trigger (`bookmarks_set_updated_at`, in migration `0009`) bumps it on *any* `UPDATE`
+  to the row, regardless of which route/code path did it — deliberately not something
+  any handler sets by hand, so no future update path can forget it. This is what makes
+  `GET /bookmarks/sync?since=<timestamp>` work as a plain diff (see Browser sync
+  below) without a separate change-log table.
 - **`shortcutChecked` (bookmarks): a cache, asymmetric on purpose.** Set `true` only
   when shortcut-detection confidently rules a bookmark *out* as a shortcut — an
   unconfirmed positive candidate stays `false` so it keeps surfacing every run until
@@ -135,16 +170,30 @@ distinction right shaped a lot of the later design:
   doesn't already have a confident "no" for. `POST /bookmarks/clear-shortcut-cache`
   (a "Clear scan cache" button) resets it for a full re-scan.
 
-**The web app has four top-level views, a strict partition on `status`/`type`, plus a
-cross-cutting fifth:**
+**The web app has five top-level tabs, four of them a strict partition on
+`status`/`type`, plus a cross-cutting omnisearch:**
 - **References** = `type: "reference"` AND `status: "resolved"`
 - **Shortcuts** = `type: "shortcut"` (resolution implies `status: "resolved"` too)
 - **Projects** = every resolved bookmark of *either* type that has a `project` set,
   grouped by project instead of by type — this is the one view that deliberately
-  crosses the reference/shortcut line, because that's what a project *is*.
+  crosses the reference/shortcut line, because that's what a project *is*. Redesigned
+  from an expandable flat list into a **card grid** (one card per project, a dashed
+  "+ New project" card first) that drills into a per-project detail view on click
+  (References/Shortcuts sections, same as before, plus rename/remove/+Add) — the grid
+  is purely a browsing/navigation layer, all the actual CRUD moved into that detail
+  view's header instead of living on every list row.
 - **Pending** = `status != "resolved"`, regardless of type — mostly from bulk import
   failing to scrape a page, meaning the system genuinely doesn't know yet whether it's
-  a reference or a shortcut.
+  a reference or a shortcut. **Deliberately stripped down**: a pending row has no
+  scraped content, so there's nothing to tag/categorize/summarize by hand — the row is
+  just title (links out to reopen the page) + URL + Delete, two-per-row grid instead of
+  a single column. The old per-row "✓ Mark resolved"/"📦 It's a shortcut" controls are
+  gone; the only real path forward for a pending item is delete it or reopen-and-re-add
+  it so it actually gets scraped.
+- **Settings** — the fifth tab, and the one-stop home for category definitions (see
+  Data model above): the category list (name, description, bookmark count, inline
+  rename/describe/remove), the "+ New category" form, and the AI taxonomy-planning
+  panel (`CategoryPlanReview.tsx`).
 - **Omnisearch** (not a tab): one search bar lives in the app header now, not
   duplicated per-view. A non-empty query takes over the content area **regardless of
   which tab is selected** and searches every bookmark of every type/status at once
@@ -169,10 +218,13 @@ setting `status`/`type` correctly on resolution.
    (cookie walls, bot-check interstitials, paywalls) — same LLM call, no extra cost.
 2. ✅ **Shortcut detection** — persisted job (see "the job pattern" below), cached via
    `shortcutChecked` (see Data model). Bidirectional manual override always available.
-3. ✅ **Category classification** — persisted job, chunked + concurrent (see below).
-   Classifies both references and shortcuts against **whatever categories currently
-   exist** — it does not generate or reshape the category list itself (see Data model
-   and Open items).
+3. ✅ **Category classification ("Auto-categorize")** — persisted job, chunked +
+   concurrent (see below). Classifies against **whatever categories currently
+   exist** — it does not generate or reshape the category list itself (that's item 7).
+   **Scoped by bookmark type**: the button/job is per-tab (References vs. Shortcuts),
+   `type` is a required request field, and each tab's job-tracking `localStorage` key
+   is namespaced by type too — these used to share one key, so starting a job in one
+   tab could show it "resuming" in the other.
 4. ✅ **AI title suggestion** — [`ai/title.ts`](packages/server/src/ai/title.ts), a
    stateless call (like `/bookmarks/preview`) that proposes a cleaned-up title from
    page content, stripping site-name suffixes ("... - Example.com"). Shown as a
@@ -200,16 +252,24 @@ setting `status`/`type` correctly on resolution.
    chosen), and [`ai/embeddings.ts`](packages/server/src/ai/embeddings.ts) defines an
    `EmbeddingProvider` interface so wiring one in is a one-file change. Hasn't moved
    since the very start of the project.
-7. ⏳ **Category taxonomy management assistant — designed, not built.** The intended
-   shape (confirmed with the user, next thing to pick up): categories stay entirely
-   human-managed (create/rename/delete, already built) and the *existing* `categories`
-   table stays the single source of truth — no separate "definition" list. The new
-   piece is one LLM call that looks at all current categories (with descriptions) and
-   all resolved bookmarks (both types) and recommends **add / rename / delete**
-   actions on the taxonomy itself — a cleanup/reorganization assistant, reviewed
-   before applying like everything else here — as distinct from classification
-   (item 3), which only assigns bookmarks into whatever categories already exist and
-   never reshapes the list. Building this is the natural next step.
+7. ✅ **Category taxonomy planning assistant** — see Data model above for the full
+   shape. One LLM call (`ai/planCategories.ts`) over per-category *samples* (not the
+   full corpus — bounded prompt size regardless of how large the library gets) proposes
+   add/rename/remove/describe changes to the category list itself, reviewed
+   (`CategoryPlanReview.tsx`, checkboxes per suggestion + the model's stated reason)
+   before anything is applied. Distinct from classification (item 3), which never
+   reshapes the list, only assigns into it.
+8. ✅ **"Auto-fill" in the extension's save form** — `POST /bookmarks/preview` (the
+   extension's preview-then-confirm step) now returns, alongside tags/summary, a
+   suggested **category** (from the existing list, same guarantee as item 3 — never
+   invents one) and a **type guess** (reference vs. shortcut, reusing item 2's
+   shortcut-classification call). Both are pre-filled but fully overridable before
+   saving. **Project is deliberately excluded from auto-fill** — it's a pure
+   user-curated grouping, not something to guess. The extension's Category/Project
+   fields are also select-only now (populated from the existing lists) — no more
+   typing a new one into existence from the extension; that's Settings'/Projects'
+   job now, matching the "one place to define things" principle category management
+   went through.
 
 ### The persisted-job pattern (use this for anything slow)
 
@@ -226,8 +286,9 @@ way, and **any future slow AI/batch operation should follow this shape too**:
   the job's real start, not the component's mount time (otherwise reopening the page
   after a while shows a counter that restarted from zero, which looks wrong even
   though the job itself is fine).
-- The tables: `import_jobs`, `category_suggestion_jobs`, `detect_shortcut_jobs` — same
-  shape each time (`status`, a result column, `error`, `createdAt`).
+- The tables: `import_jobs`, `category_suggestion_jobs`, `detect_shortcut_jobs`,
+  `category_plan_jobs` — same shape each time (`status`, a result column, `error`,
+  `createdAt`).
 
 Two lessons learned building this that generalize to any new AI call site:
 
@@ -248,14 +309,62 @@ Two lessons learned building this that generalize to any new AI call site:
   in one shot" → chunk + concurrency) to any future call with a similarly-shaped
   output.
 
+## Browser sync — mirroring bookmarks into the browser's own store
+
+The extension can now push resolved bookmarks **one-way** (app → browser, never back)
+into the browser's native Bookmarks Toolbar (shortcuts) and Other Bookmarks
+(references), organized into per-category subfolders — a `Sync to browser` button in
+the extension's Settings page. This exists specifically because a browser's native
+bookmark folder tree is a strict single-parent hierarchy and can't represent this app's
+multi-axis model (a bookmark can have a category *and* a project *and* tags
+simultaneously) — the deliberate choice was to make **category** the one axis that maps
+to folders, and leave project/tags unrepresented in the browser rather than force a
+lossy or duplicated mapping.
+
+- **Type → root folder**: shortcuts → Bookmarks Toolbar, references → Other Bookmarks.
+  Bookmarks Menu and Mobile Bookmarks are never touched.
+- **Sync detection is a plain timestamp diff, on purpose — no separate ledger.**
+  `GET /bookmarks/sync?since=<timestamp>` (server's own clock, returned as `syncedAt`,
+  used as the client's *next* `since` — avoids client/server clock drift) returns every
+  bookmark with `updatedAt` after that time. The extension keeps exactly **one**
+  timestamp locally (`storage.local`, deliberately not `storage.sync` — a bookmark id
+  from one browser install has no meaning in another, so each install must track its
+  own sync state independently). A deliberately minimal choice: this means sync is
+  **additive-only** — a bookmark deleted from the app after being synced stays in the
+  browser until removed by hand, since there's no list to diff against to notice the
+  removal. That trade-off was made explicitly in favor of not maintaining a
+  long-lived ledger.
+- **Soft-delete is what makes even that timestamp diff catch removals at all.** See
+  `invalid`/`updatedAt` in Data model above — flipping `invalid` is an `UPDATE`, so the
+  trigger bumps `updatedAt`, so the next sync's diff picks it up and removes the
+  matching browser bookmark, without the endpoint needing any special "deleted since"
+  query shape.
+- **First sync wipes and rebuilds** Toolbar + Other Bookmarks entirely (confirmed with
+  a hard warning dialog first) rather than trying to dedupe against whatever's already
+  there — most of a fresh install's bookmarks got there via this app's own *import*
+  feature in the first place, so leaving old copies in place would just double
+  everything up. The extension's Settings page also has a one-click **"Download
+  backup"** that dumps the *entire* native bookmark tree (not just the two folders
+  about to be wiped) to a Netscape-format HTML file first — re-importable by any
+  browser if a sync ever goes wrong.
+- **Known gap, not yet built: category *definition* changes aren't synced.** Renaming
+  or deleting a category that currently has zero bookmarks produces no signal at all
+  (the sync feed is bookmark-keyed), so it can leave a stale, orphaned folder behind in
+  the browser with the old name. Fixing this needs categories to carry their own
+  `invalid`/`updatedAt` (same trigger pattern) and a second feed the extension
+  reconciles folder names against — flagged mid-session as "heavy, needs tricks," not
+  started.
+
 ## Project Structure
 
 npm workspaces monorepo:
 
 ```
 BookmarkManager/
-├── docker-compose.yml       # db + app — deploy topology (see infra notes below)
+├── docker-compose.yml       # db + app — LOCAL DEV topology only, not for a public VPS
 ├── docker-compose.dev.yml   # dev override: bind-mounts source, hot-reloads the server
+├── docker-compose.prod.yml  # standalone prod stack — see Deployment below, and DEPLOY.md
+├── DEPLOY.md                # the actual VPS deploy runbook — read this before deploying
 ├── .env.example             # docker-compose env (Postgres creds, DEEPSEEK_API_KEY, PORT)
 ├── .nvmrc                   # Node version — use nvm, not Homebrew (see infra notes)
 ├── package.json             # workspaces root
@@ -287,17 +396,26 @@ Fastify API, all routes under `/api`:
   require a proxy.
 - [`src/db/schema.ts`](packages/server/src/db/schema.ts) — Drizzle schema: `bookmarks`
   (url, title, content, summary, favicon, `categoryId`/`projectId` FKs, `status`,
-  `type`, `shortcutChecked`), `categories` (name, `description`), `projects` (name),
-  `tags` (all upsert-by-name), `bookmark_tags` (join table), `bookmark_embeddings`
+  `type`, `shortcutChecked`, **`invalid`** and **`updatedAt`** — see Data model and
+  Browser sync above), `categories` (name, `description`), `projects` (name), `tags`
+  (all upsert-by-name), `bookmark_tags` (join table), `bookmark_embeddings`
   (placeholder, see AI features), `import_jobs`, `category_suggestion_jobs`,
-  `detect_shortcut_jobs` (the last two: see "the job pattern" above).
+  `detect_shortcut_jobs`, `category_plan_jobs` (the last three: see "the job pattern"
+  above). `updatedAt` is maintained by a raw-SQL trigger in migration `0009`
+  (`bookmarks_set_updated_at`), not by Drizzle/application code — deliberately, so no
+  future update path can forget to bump it.
 - [`src/routes/bookmarks.ts`](packages/server/src/routes/bookmarks.ts) — the big one:
   `GET`/`POST`/`PATCH`/`DELETE /bookmarks` (the dedup-merge logic from AI features #5
-  lives in `POST`), `POST /bookmarks/preview` (stateless tag generation), `POST
-  /bookmarks/suggest-title` (stateless), `detect-shortcuts`/`confirm-shortcuts`/
-  `clear-shortcut-cache`, `suggest-categories`/`apply-categories`. `PATCH` is a true
-  partial update (omitted fields untouched, `""` clears category/project, presence of
-  `tags` replaces the full set, `resolved: true` is the explicit resolve path).
+  lives in `POST`; `DELETE` sets `invalid` rather than removing the row), `POST
+  /bookmarks/preview` ("Auto-fill" — tags/summary/category/type guess, see AI features
+  #8), `POST /bookmarks/suggest-title` (stateless), `detect-shortcuts`/
+  `confirm-shortcuts`/`clear-shortcut-cache`, `suggest-categories`/`apply-categories`
+  (now `type`-scoped, see AI features #3), and **`GET /bookmarks/sync`** (see Browser
+  sync above — a narrow feed of `{id, url, title, category, type, invalid, updatedAt}`
+  for whatever changed since a given time, including invalidated rows). `PATCH` is a
+  true partial update (omitted fields untouched, `""` clears category/project,
+  presence of `tags` replaces the full set, `resolved: true` is the explicit resolve
+  path).
 - [`src/routes/categories.ts`](packages/server/src/routes/categories.ts) /
   [`projects.ts`](packages/server/src/routes/projects.ts) — near-identical CRUD:
   `GET` (plain name list, used by every "Move to"/datalist consumer), `POST` (explicit
@@ -305,7 +423,9 @@ Fastify API, all routes under `/api`:
   an existing description; projects' just upserts), `PATCH` (rename, merges into an
   existing name if the target already exists rather than erroring), `DELETE` (soft —
   un-links affected bookmarks, never deletes them). Categories additionally has `GET
-  /categories/full` (name+description pairs) and `PATCH /categories/description`.
+  /categories/full` (name+description pairs), `PATCH /categories/description`, and
+  **`POST`/`GET /categories/plan`** (the taxonomy-planning job — see AI features #7 —
+  built from per-category *samples* via `buildCategorySamples()`, not the full corpus).
 - [`src/routes/import.ts`](packages/server/src/routes/import.ts) — bulk import job
   runner. Per-URL: fetch (with the proxy dispatcher above) → extract text (deliberately
   crude regex-based, [`extraction/html.ts`](packages/server/src/extraction/html.ts) —
@@ -317,42 +437,69 @@ Fastify API, all routes under `/api`:
   [`classify.ts`](packages/server/src/ai/classify.ts) — shortcut-detection check,
   reusing already-scraped content. [`categorize.ts`](packages/server/src/ai/categorize.ts)
   — `classifyChunk` (see "the job pattern"). [`title.ts`](packages/server/src/ai/title.ts)
-  — title suggestion.
+  — title suggestion. [`planCategories.ts`](packages/server/src/ai/planCategories.ts)
+  — the taxonomy-planning call (AI features #7); cross-validates every name the model
+  returns against the real category list, so a hallucinated add/rename/describe target
+  gets silently dropped rather than accepted.
 
 ### `packages/web`
 
 React + Vite + Tailwind v4 (`@tailwindcss/vite`, zero-config) + TanStack Query v5.
 
-- [`src/App.tsx`](packages/web/src/App.tsx) — top-level shell: the four-tab switcher,
-  the omnisearch bar (see Data model), and the shared `category-options`/
-  `project-options` `<datalist>`s every `BookmarkRow`/`ShortcutTile` uses.
+- [`src/App.tsx`](packages/web/src/App.tsx) — top-level shell: the five-tab switcher
+  (References/Shortcuts/Projects/Pending/Settings), the omnisearch bar (see Data
+  model), and the shared `category-options`/`project-options` `<datalist>`s every
+  `BookmarkRow`/`ShortcutTile` uses.
+- [`src/SettingsView.tsx`](packages/web/src/SettingsView.tsx) — the category
+  management home (see Data model): the list (name, description, bookmark-count),
+  `NewCategoryForm.tsx`, and `CategoryPlanReview.tsx` (the taxonomy-planning job
+  trigger + review panel — same job-persistence shape as `CategorySuggestions.tsx`).
 - [`src/ReferenceView.tsx`](packages/web/src/ReferenceView.tsx) /
   [`ShortcutView.tsx`](packages/web/src/ShortcutView.tsx) — each has a Category/All
-  sub-toggle; Category mode uses `GroupedCardView.tsx` (generic over how a group's
-  items render via a `renderItems` prop — a `BookmarkRow` list by default, a
-  `ShortcutTile` grid for shortcuts — so the grouping/rename/remove/description-edit
-  logic isn't duplicated). Both also host `NewCategoryForm.tsx`, and References hosts
-  `CategorySuggestions.tsx` (the classify-job trigger + review panel).
-- [`src/ProjectsView.tsx`](packages/web/src/ProjectsView.tsx) — lists every project
-  (from the full name list, not just ones with bookmarks — see Data model), each with
-  create/rename/remove and an inline "+ Add" search panel; expanding one splits into
-  References/Shortcuts sub-sections.
+  sub-toggle and an "Auto-categorize" trigger (`CategorySuggestions.tsx`, now used by
+  both, each passing its own `type`). Category mode uses `GroupedCardView.tsx`
+  (generic over how a group's items render via a `renderItems` prop — a `BookmarkRow`
+  list by default, a `ShortcutTile` grid for shortcuts) — **now read-only display
+  only** (name, description, count pill, one line); the rename/remove/describe
+  controls that used to live in each group header moved to Settings.
+- [`src/ProjectsView.tsx`](packages/web/src/ProjectsView.tsx) — **redesigned into a
+  card grid** (browsing layer only) that drills into a per-project detail view on
+  click (References/Shortcuts sections + create/rename/remove/+Add, formerly on every
+  list row, now only in the detail view's header). Renaming the currently-open
+  project follows the rename instead of bouncing back to the grid because its key
+  stopped matching anything.
 - [`src/SearchResultsView.tsx`](packages/web/src/SearchResultsView.tsx) — the
   omnisearch results view (see Data model); takes over from whatever tab is active.
-- [`src/PendingView.tsx`](packages/web/src/PendingView.tsx) — flat list of everything
-  unresolved, with "✓ Mark resolved"/"📦 It's a shortcut" actions per row.
+  Its pending-results section uses `PendingRow.tsx` now, same as the Pending tab.
+- [`src/PendingView.tsx`](packages/web/src/PendingView.tsx) /
+  [`PendingRow.tsx`](packages/web/src/PendingRow.tsx) — deliberately minimal now (see
+  Data model): title (links out) + URL + Delete, two-column grid. No
+  tag/category/summary editing and no "Mark resolved"/"It's a shortcut" — a pending
+  bookmark has no scraped content, so there's nothing to hand-edit; the only real move
+  is delete or reopen-and-re-add.
 - [`src/BookmarkRow.tsx`](packages/web/src/BookmarkRow.tsx) — the shared reference
-  card: inline title rename (+ AI "Suggest"), tag pills, category/project fields, a
-  "Move to [category]" dropdown when in a grouped context, "It's a shortcut" (always
-  available), and an `onRemoveFromProject` prop that — only when provided (i.e., this
-  row is being shown inside a project) — swaps "Delete" for "Remove" (unlink from
-  project, not delete the bookmark).
-- [`src/ShortcutTile.tsx`](packages/web/src/ShortcutTile.tsx) — the shortcut
-  equivalent: stays a direct link (a shortcut's whole point is one click to the URL,
-  so nothing about editing can hijack that click) with a hover-revealed "…" icon that
-  expands an inline editor below the tile (category/project/tags, same fields as
-  `BookmarkRow`) and a hover-revealed "×" that deletes (title says so) — same
-  `onRemoveFromProject` override as `BookmarkRow` when shown inside a project.
+  card. Reworked into an actual **card**: raised surface + shadow (distinct from the
+  page background, not just an outlined row), and reordered into title/URL/summary,
+  then a divider, then category+move-to on one line, tags, project last (was
+  category → move-to → project → tags before — project now comes after tags, matching
+  the divider-separated "content vs. metadata" split). Still: inline title rename
+  (+ AI "Suggest"), tag pills, "It's a shortcut" (always available), and
+  `onRemoveFromProject` swapping "Delete" for "Remove" when shown inside a project.
+- [`src/ShortcutTile.tsx`](packages/web/src/ShortcutTile.tsx) — stays a direct link
+  (a shortcut's whole point is one click to the URL) with a hover-revealed "…" that
+  expands an inline editor (same field order as `BookmarkRow` now: category+move-to,
+  tags, project) and a hover-revealed "×" that deletes. The expanded editor is now:
+  - **Absolutely positioned**, not in normal document flow — a wide panel can't push
+    neighboring tiles around, and its opaque background + `z-20` guarantee it (not
+    whatever tile happens to sit underneath its footprint) catches every click inside
+    its bounds.
+  - **Mutually exclusive across every tile on the page** — a tiny module-level
+    external store (`useSyncExternalStore`, keyed by bookmark id) means opening one
+    tile's editor always closes whichever other one was open, regardless of which view
+    rendered them (References/Shortcuts/a project's list/search results all share it).
+  - **Closes on outside click**, and **edge-aware** — right-aligns instead of
+    left-aligning when there isn't room to the right (tiles near the window edge),
+    measured against the tile's own bounding rect at open time.
 - [`src/Favicon.tsx`](packages/web/src/Favicon.tsx) — falls back to a colored
   initial-circle (hashed from the title, stable across reloads) when there's no
   favicon or it fails to load.
@@ -361,25 +508,35 @@ React + Vite + Tailwind v4 (`@tailwindcss/vite`, zero-config) + TanStack Query v
 
 WebExtension, Manifest V3, Firefox-first (`browser_specific_settings.gecko.id`), using
 `webextension-polyfill` so the same source works in Chrome/Edge later with just a
-second manifest/build target — no Chrome build target exists yet.
+second manifest/build target — no Chrome build target exists yet. The manifest also
+declares `data_collection_permissions` (`bookmarksInfo` + `websiteContent`, both
+`required`) — a Mozilla requirement for new AMO submissions since Nov 2025; missing it
+fails validation outright with no other explanation than "the property is missing."
 
 - [`src/content.ts`](packages/extension/src/content.ts) — not a declared content
   script; a plain function injected on demand via `browser.scripting.executeScript`
   only when the user acts, so nothing runs on every page load.
 - [`src/background.ts`](packages/extension/src/background.ts) — all `fetch`-to-server
-  logic and message handling (extraction, preview, save, list, import,
-  `OPEN_MANAGE_PAGE`). `SAVE_BOOKMARK` can come back as a `409` conflict now (see AI
-  features #5) — the popup shows a keep/use-new choice per field, not just success/fail.
+  logic and message handling (extraction, save, list, import, sync, `OPEN_MANAGE_PAGE`).
+  The old `PREVIEW_TAGS` message is `AUTO_FILL` now (see AI features #8) and returns
+  `{tags, summary, category, isShortcut}`, not just tags/summary. `SAVE_BOOKMARK` can
+  come back as a `409` conflict (see AI features #5) — the popup shows a keep/use-new
+  choice per field, not just success/fail.
 - [`src/popup/popup.ts`](packages/extension/src/popup/popup.ts) — Save tab
   (preview-then-confirm form, conflict resolution UI) and Browse tab (read-only,
-  searchable, grouped by category/project). A **Manage** button next to Settings sends
-  `OPEN_MANAGE_PAGE`, which opens `serverUrl`'s root in a new tab or focuses one
-  already open there — needs the `"tabs"` manifest permission to see tab URLs well
-  enough to match against, so a fresh install/reload needs to accept that permission
-  before the button works.
-- [`src/options.ts`](packages/extension/src/options.ts) — server URL config, and the
-  bulk import flow (`browser.bookmarks.getTree()` → flatten → `POST /api/import` →
-  poll for progress → CSV report download).
+  searchable, grouped by category/project). The save form has a **Type toggle**
+  (Reference/Shortcut, defaults to Reference, set by Auto-fill's guess but always
+  overridable) and Category/Project are **`<select>`s populated from the existing
+  lists** now, not free-text comboboxes with a "+ Add" affordance — creating a new one
+  from the extension isn't possible anymore, matching the "one place to define things"
+  move category management went through (Settings/Projects own that now). "✨ Auto-tag"
+  is "✨ Auto-fill" — same button, extended scope (item 8). A **Manage** button next to
+  Settings sends `OPEN_MANAGE_PAGE`, needs the `"tabs"` permission.
+- [`src/options.ts`](packages/extension/src/options.ts) — server URL config, the bulk
+  import flow (`browser.bookmarks.getTree()` → flatten → `POST /api/import` → poll for
+  progress → CSV report download), and now **Sync to browser** (see the dedicated
+  section above) — a "Download backup" button (full tree → Netscape-format HTML) and
+  the "Sync to browser" trigger itself, both against `browser.bookmarks`.
 - Both popup and options show a **build timestamp** (regenerated by an esbuild plugin
   on every build, including incremental rebuilds under `--watch`) so you can tell
   whether a `web-ext` reload actually picked up the latest code.
@@ -404,6 +561,11 @@ These were each the result of real friction — worth knowing before re-deriving
   this has been re-confirmed more than once mid-session; don't reach for
   `docker ps`/`docker compose` to inspect or query the local DB, use `psql` directly.
 - **`pgvector/pgvector:pg18`** in the Docker image, matching the native Postgres 18.
+  **Mount the volume at `/var/lib/postgresql`, not `.../postgresql/data`** — Postgres
+  18+'s official images changed the expected layout (data now lives under a
+  version-specific subdirectory, for `pg_ctlcluster`-style upgrades); the old pre-18
+  mount point makes the entrypoint refuse to start outright. Real bug, found and fixed
+  during the first actual VPS deploy — see Deployment below.
 - **DeepSeek, not OpenAI**, for cost. Model name is `deepseek-flash` — `deepseek-chat`/
   `deepseek-reasoner` were discontinued 2026-07-24. **Every DeepSeek call site needs an
   explicit timeout** — see "the job pattern" above; the SDK's 10-minute default is not
@@ -423,12 +585,100 @@ These were each the result of real friction — worth knowing before re-deriving
   long session — also explicit preference. Prefer several atomic commits over one giant
   one when a session's work touches unrelated concerns.
 
+## Deployment
+
+**First production deploy happened 2026-09-12** — a personal Aliyun ECS VPS, already
+running several unrelated services (Vaultwarden, Calibre-Web, OpenList, FileCodeBox)
+behind an existing nginx. **`DEPLOY.md` is the actual runbook** (step-by-step, written
+for that setup: existing nginx fronting it, not a bundled reverse proxy); this section
+is the *why*, and the traps worth knowing about before redeploying or deploying
+elsewhere.
+
+- **`docker-compose.prod.yml` is deliberately standalone, not an override of
+  `docker-compose.yml`.** Compose concatenates list fields like `ports` across `-f`
+  layers instead of replacing them — an override trying to *remove* a port mapping
+  (Postgres's, published in the dev file) could silently leave the original exposed
+  anyway. One self-contained file you can read start to finish beats a layering trick,
+  for something security-sensitive.
+- **No bundled reverse proxy.** The original plan bundled Caddy for automatic HTTPS;
+  dropped once it turned out the target VPS already runs nginx for other sites —
+  Caddy would have fought it for ports 80/443. `app` binds to `127.0.0.1` only; the
+  *existing* nginx proxies to it. If deploying somewhere with no existing reverse
+  proxy, Caddy (or nginx from scratch) would need to come back.
+- **TLS**: that box already uses `acme.sh` (ZeroSSL, HTTP-01 webroot validation, daily
+  renewal cron) for its other domains — reused the same tool/pattern for the new
+  subdomain rather than introducing a second cert-management approach.
+  - **ZeroSSL's HTTP-01 validator failed twice in a row reaching the box, then
+    succeeded minutes later with an unchanged command** — nginx was serving the
+    challenge correctly the whole time (confirmed both by direct probe and by the
+    access log never showing the validator's request arrive at all on the failed
+    attempts). Read this as "mainland-China-hosted-IP reachability from CA validators
+    can be flaky; a plain retry after a short wait is a legitimate first move," not as
+    a sign the setup is wrong.
+  - **Switching to Let's Encrypt surfaced a real, separate issue**: that domain's
+    authoritative nameservers (Alibaba/`hichina` DNS) error (`REFUSED`/`SERVFAIL`) on
+    CAA-type queries specifically — affects every subdomain equally, but only breaks
+    issuance with CAs that hard-fail on a CAA lookup error (Let's Encrypt does,
+    ZeroSSL evidently doesn't). Net effect: **stick with ZeroSSL** on this DNS setup;
+    don't "fix" a ZeroSSL hiccup by switching CAs, that trades a transient problem for
+    a structural one.
+- **Docker Hub and the npm registry can both be unreachable/painfully slow from a
+  mainland China VPS** — separate from the TLS/CAA issues above, same underlying
+  network-reachability theme:
+  - Base images (`pgvector/pgvector:pg18`, `node:24-slim`) were pulled through a
+    working public mirror (`docker.m.daocloud.io`) and re-tagged locally to their
+    expected names, rather than reconfiguring the Docker daemon (which would have
+    needed a `dockerd` restart — and this box has `live-restore` disabled and at least
+    one container with restart-policy `no`, meaning a daemon restart would have
+    durably broken something unrelated, not just briefly blipped it).
+  - `npm install` during the image build hung effectively indefinitely against the
+    default registry (individual requests succeeded, just slowly — ~4s each — but the
+    full install of ~230 packages never completed). Fixed properly, not just
+    papered over on the box: `packages/server/Dockerfile` takes an `NPM_REGISTRY`
+    build arg (default unchanged, `registry.npmjs.org`), wired through
+    `docker-compose.prod.yml`'s `build.args` from a `.env` var — set it to
+    `https://registry.npmmirror.com` (Alibaba's own, fast from an Aliyun VPS) only on
+    hosts where it's needed.
+  - Even with the mirror, that same `npm install` took ~8 minutes and pushed the box
+    (1.7GB RAM, no swap configured beforehand) into heavy swap thrashing severe enough
+    that new SSH connections couldn't complete the banner exchange — looked
+    indistinguishable from a dead box for several minutes. It recovered on its own
+    once the build finished; nothing crashed or got OOM-killed (all four pre-existing
+    containers, including Vaultwarden, came through untouched). Added a 2GB swap file
+    as a standing precaution — doesn't prevent slowness under this kind of memory
+    pressure, but gives the kernel room to degrade gracefully instead of invoking the
+    OOM killer. **Don't run a heavy build on a memory-constrained box that also hosts
+    other real services without a swap safety net first.**
+- **First sync of real data**: local dev's ~900 bookmarks were moved over with
+  `pg_dump --data-only --disable-triggers` scoped to just the real data tables
+  (`categories`, `projects`, `tags`, `bookmarks`, `bookmark_tags` — deliberately
+  excluding the empty `bookmark_embeddings` table and the four job-history tables,
+  which are ephemeral run logs tied to the dev session, not data worth carrying over),
+  piped into the prod container's `psql`. Row counts and sequence `setval`s were
+  verified to match exactly post-restore before trusting it.
+- **Extension side**: AMO now requires new submissions to declare
+  `browser_specific_settings.gecko.data_collection_permissions` (since Nov 2025) —
+  missing it fails validation with no other explanation than "the property is
+  missing." See the `packages/extension` section above for what's declared and why.
+  **Firefox for Android** doesn't offer arbitrary/unlisted-extension install through
+  its normal UI; the extension has to be signed via AMO's free "unlisted"
+  self-distribution flow (automated, no human review) before even Nightly's hidden
+  debug "install add-on from file" menu will accept it — a locally-built unsigned
+  `.xpi` gets rejected outright ("not verified"). Installed successfully this way, but
+  **has real compatibility issues on Android that are unresolved** — picking this back
+  up is future work, not done.
+
 ## Open items
 
-1. **Category taxonomy management assistant** — designed, not built. See AI features
-   item 7 above; this is the natural next piece to pick up.
-2. **Semantic search / embedding provider** — never decided. See AI features item 6.
-3. **Bulk import doesn't merge duplicates**, only skips them — see AI features item 5.
+1. **Category-definition changes aren't reflected in browser sync.** See Browser sync
+   above — renaming/deleting a zero-bookmark category produces no signal in the
+   bookmark-keyed sync feed, so a stale folder can be left behind. Needs categories to
+   carry their own `invalid`/`updatedAt` and a second feed the extension reconciles
+   folder names against.
+2. **Extension has real compatibility issues on Firefox for Android**, not yet
+   diagnosed — see Deployment above. Next session's pickup.
+3. **Semantic search / embedding provider** — never decided. See AI features item 6.
+4. **Bulk import doesn't merge duplicates**, only skips them — see AI features item 5.
    The single-save path (extension → `POST /bookmarks`) already merges correctly; the
    bulk path's `seenUrls` check in `import.ts` would need the same treatment.
 
@@ -474,6 +724,9 @@ extension's options page, accept the `"tabs"` permission if prompted (needed for
 Manage button), and check the build timestamp shown there/in the popup to confirm
 you're looking at the latest build.
 
-**VPS deploy**: `docker compose up -d --build` on the server, using the same
-`docker-compose.yml` and a production `.env`. This is the one place Docker is actually
-required.
+**VPS deploy**: see [`DEPLOY.md`](DEPLOY.md) — **not** the same `docker-compose.yml` as
+local dev; use `docker-compose.prod.yml` (standalone, no published Postgres port,
+`app` bound to `127.0.0.1` for an existing reverse proxy to reach). This is the one
+place Docker is actually required. See Deployment above for the hard-won lessons from
+the first real deploy (Postgres 18's volume-mount convention, CA/DNS/registry
+reachability from a mainland China host, memory headroom) before doing it again.
