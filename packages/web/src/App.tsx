@@ -2,9 +2,10 @@ import { useState } from "react";
 import { useBookmarks, useCategories, useProjects } from "./api";
 import { ReferenceView } from "./ReferenceView";
 import { ShortcutView } from "./ShortcutView";
+import { ProjectsView } from "./ProjectsView";
 import { PendingView } from "./PendingView";
 
-type View = "references" | "shortcuts" | "pending";
+type View = "references" | "shortcuts" | "projects" | "pending";
 
 export function App() {
   const { data: bookmarks = [], error } = useBookmarks();
@@ -18,6 +19,9 @@ export function App() {
   const pending = bookmarks.filter((b) => b.status !== "resolved");
   const references = bookmarks.filter((b) => b.type === "reference" && b.status === "resolved");
   const shortcuts = bookmarks.filter((b) => b.type === "shortcut");
+  // A project is a container that collects references and shortcuts together, not a
+  // reference-only attribute — so it draws from both, same resolved set as above.
+  const resolved = [...references, ...shortcuts];
 
   return (
     <div className="h-screen flex flex-col bg-white dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100">
@@ -25,7 +29,7 @@ export function App() {
         <div className="flex items-center gap-6">
           <h1 className="text-lg font-bold">🔖 Bookmark Manager</h1>
           <nav className="flex gap-1 bg-neutral-100 dark:bg-neutral-800 rounded-lg p-1">
-            {(["references", "shortcuts", "pending"] as const).map((v) => (
+            {(["references", "shortcuts", "projects", "pending"] as const).map((v) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
@@ -35,7 +39,13 @@ export function App() {
                     : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
                 }`}
               >
-                {v === "references" ? "📄 References" : v === "shortcuts" ? "🔗 Shortcuts" : `⏳ Pending`}
+                {v === "references"
+                  ? "📄 References"
+                  : v === "shortcuts"
+                    ? "🔗 Shortcuts"
+                    : v === "projects"
+                      ? "📦 Projects"
+                      : "⏳ Pending"}
               </button>
             ))}
           </nav>
@@ -65,6 +75,7 @@ export function App() {
 
       {view === "references" && <ReferenceView bookmarks={references} categories={categories} />}
       {view === "shortcuts" && <ShortcutView shortcuts={shortcuts} />}
+      {view === "projects" && <ProjectsView bookmarks={resolved} />}
       {view === "pending" && <PendingView pending={pending} />}
     </div>
   );

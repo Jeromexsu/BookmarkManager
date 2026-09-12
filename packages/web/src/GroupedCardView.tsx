@@ -3,27 +3,20 @@ import type { Bookmark } from "@bookmark-manager/shared";
 import { BookmarkRow } from "./BookmarkRow";
 import { useDeleteCategory, useRenameCategory } from "./api";
 
-export type GroupMode = "category" | "project";
-
 interface GroupedCardViewProps {
   bookmarks: Bookmark[];
-  mode: GroupMode;
   // While searching, every group with a match should just be visible — the user shouldn't
   // have to expand each one by hand to see what matched.
   autoExpand?: boolean;
   // Full category name list (unaffected by search/grouping) — used for the per-bookmark
-  // "Move to" dropdown and to know what a rename would collide/merge with. Category mode only.
+  // "Move to" dropdown and to know what a rename would collide/merge with.
   categories?: string[];
 }
 
-// Category groups every bookmark (with an "Uncategorized" bucket); project only counts
-// bookmarks that have one — same convention as the extension's popup.ts buildGroups.
-function buildGroups(bookmarks: Bookmark[], mode: GroupMode): Map<string, Bookmark[]> {
+function buildGroups(bookmarks: Bookmark[]): Map<string, Bookmark[]> {
   const groups = new Map<string, Bookmark[]>();
-  const relevant = mode === "project" ? bookmarks.filter((b) => b.project) : bookmarks;
-
-  for (const b of relevant) {
-    const key = mode === "project" ? b.project! : (b.category ?? "Uncategorized");
+  for (const b of bookmarks) {
+    const key = b.category ?? "Uncategorized";
     const list = groups.get(key) ?? [];
     list.push(b);
     groups.set(key, list);
@@ -31,14 +24,14 @@ function buildGroups(bookmarks: Bookmark[], mode: GroupMode): Map<string, Bookma
   return groups;
 }
 
-export function GroupedCardView({ bookmarks, mode, autoExpand = false, categories }: GroupedCardViewProps) {
+export function GroupedCardView({ bookmarks, autoExpand = false, categories }: GroupedCardViewProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [renamingKey, setRenamingKey] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const renameMutation = useRenameCategory();
   const deleteMutation = useDeleteCategory();
 
-  const groups = buildGroups(bookmarks, mode);
+  const groups = buildGroups(bookmarks);
   const sortedKeys = [...groups.keys()].sort((a, b) => {
     if (a === "Uncategorized") return 1;
     if (b === "Uncategorized") return -1;
@@ -74,11 +67,7 @@ export function GroupedCardView({ bookmarks, mode, autoExpand = false, categorie
   }
 
   if (sortedKeys.length === 0) {
-    return (
-      <p className="text-sm text-neutral-400 text-center py-12">
-        {mode === "project" ? "No bookmarks have a project yet." : "No bookmarks yet."}
-      </p>
-    );
+    return <p className="text-sm text-neutral-400 text-center py-12">No bookmarks yet.</p>;
   }
 
   return (
@@ -86,7 +75,7 @@ export function GroupedCardView({ bookmarks, mode, autoExpand = false, categorie
       {sortedKeys.map((key) => {
         const items = groups.get(key)!;
         const isOpen = autoExpand || expanded.has(key);
-        const isManageable = mode === "category" && key !== "Uncategorized";
+        const isManageable = key !== "Uncategorized";
         const isRenaming = renamingKey === key;
         const moveToCategories = categories?.filter((c) => c !== key) ?? [];
 
@@ -139,7 +128,7 @@ export function GroupedCardView({ bookmarks, mode, autoExpand = false, categorie
             {isOpen && (
               <ul className="space-y-2 pl-6 pb-3">
                 {items.map((b) => (
-                  <BookmarkRow key={b.id} bookmark={b} moveToCategories={mode === "category" ? moveToCategories : undefined} />
+                  <BookmarkRow key={b.id} bookmark={b} moveToCategories={moveToCategories} />
                 ))}
               </ul>
             )}

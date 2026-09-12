@@ -9,7 +9,7 @@ interface ReferenceViewProps {
   categories: string[];
 }
 
-type SubView = "category" | "project" | "all";
+type SubView = "category" | "all";
 
 export function ReferenceView({ bookmarks, categories }: ReferenceViewProps) {
   const [subView, setSubView] = useState<SubView>("category");
@@ -39,7 +39,7 @@ export function ReferenceView({ bookmarks, categories }: ReferenceViewProps) {
       />
 
       <nav className="flex gap-1 bg-neutral-100 dark:bg-neutral-800 rounded-lg p-1 mb-3 w-fit">
-        {(["category", "project", "all"] as const).map((v) => (
+        {(["category", "all"] as const).map((v) => (
           <button
             key={v}
             onClick={() => setSubView(v)}
@@ -59,7 +59,7 @@ export function ReferenceView({ bookmarks, categories }: ReferenceViewProps) {
       {subView === "all" ? (
         <BookmarkList bookmarks={filtered} />
       ) : (
-        <GroupedCardView bookmarks={filtered} mode={subView} autoExpand={query.trim() !== ""} categories={categories} />
+        <GroupedCardView bookmarks={filtered} autoExpand={query.trim() !== ""} categories={categories} />
       )}
     </div>
   );
