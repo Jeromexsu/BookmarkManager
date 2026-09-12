@@ -9,7 +9,7 @@ import {
   customType,
   jsonb,
 } from "drizzle-orm/pg-core";
-import type { ImportResultItem, CategorySuggestion, ShortcutCandidate } from "@bookmark-manager/shared";
+import type { ImportResultItem, CategorySuggestion, ShortcutCandidate, CategoryPlan } from "@bookmark-manager/shared";
 
 // Dimension is a placeholder until an embedding provider is chosen (see ai/embeddings.ts).
 // pgvector requires a fixed dimension per column, so this will need a migration once decided.
@@ -66,7 +66,17 @@ export const bookmarks = pgTable("bookmarks", {
   // resolves it (confirms or the row changes). Lets re-running detection skip the (large,
   // growing) set of bookmarks it already has a confident answer for.
   shortcutChecked: boolean("shortcut_checked").notNull().default(false),
+  // Soft-delete: DELETE /bookmarks never actually removes the row — it sets this instead, so
+  // `updatedAt` (which a DB trigger bumps on every UPDATE) carries the "this got deleted"
+  // signal to anyone diffing against a last-seen timestamp, e.g. the extension's browser sync,
+  // which has no other way to notice a removal without keeping its own long-lived list. Every
+  // normal read path filters this out; only the sync endpoint deliberately includes it.
+  invalid: boolean("invalid").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // Bumped automatically by a DB trigger (see migration) on any UPDATE to this row, regardless
+  // of which code path did it — deliberately not something application code sets by hand, so
+  // no update path can forget it.
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const tags = pgTable("tags", {
@@ -111,6 +121,9 @@ export const categorySuggestionJobs = pgTable("category_suggestion_jobs", {
   id: serial("id").primaryKey(),
   status: text("status").notNull().default("running"), // "running" | "completed" | "failed"
   scope: text("scope").notNull(), // "uncategorized" | "all"
+  // Which bookmark type this run is scoped to — a run started from Shortcuts never touches
+  // References and vice versa. Defaulted for old rows created before this column existed.
+  type: text("type").notNull().default("reference"), // "reference" | "shortcut"
   suggestions: jsonb("suggestions").$type<CategorySuggestion[]>(),
   error: text("error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -123,6 +136,17 @@ export const detectShortcutJobs = pgTable("detect_shortcut_jobs", {
   id: serial("id").primaryKey(),
   status: text("status").notNull().default("running"), // "running" | "completed" | "failed"
   candidates: jsonb("candidates").$type<ShortcutCandidate[]>(),
+  error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Redefines the *taxonomy itself* (which categories should exist, at all) — distinct from
+// categorySuggestionJobs above, which only assigns bookmarks into whatever categories already
+// exist. Same "too slow for one HTTP response" job-persistence reasoning.
+export const categoryPlanJobs = pgTable("category_plan_jobs", {
+  id: serial("id").primaryKey(),
+  status: text("status").notNull().default("running"), // "running" | "completed" | "failed"
+  plan: jsonb("plan").$type<CategoryPlan>(),
   error: text("error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

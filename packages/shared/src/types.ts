@@ -41,6 +41,9 @@ export const createBookmarkRequestSchema = z.object({
   // flow) — the bookmark is saved as "resolved" immediately instead of resolved asynchronously.
   tags: z.array(z.string()).optional(),
   summary: z.string().optional(),
+  // The extension's save form lets the user pick this explicitly; omitted defaults to
+  // "reference" (import and other non-extension callers don't know or care about the split).
+  type: bookmarkTypeSchema.optional(),
 });
 export type CreateBookmarkRequest = z.infer<typeof createBookmarkRequestSchema>;
 
@@ -96,6 +99,10 @@ export type PreviewBookmarkRequest = z.infer<typeof previewBookmarkRequestSchema
 export const previewBookmarkResponseSchema = z.object({
   tags: z.array(z.string()),
   summary: z.string(),
+  // Best-guess suggestions, both overridable in the UI before saving — never invents a category
+  // outside the existing list (null when there's no good fit, or no categories defined yet).
+  category: z.string().nullable(),
+  isShortcut: z.boolean(),
 });
 export type PreviewBookmarkResponse = z.infer<typeof previewBookmarkResponseSchema>;
 
@@ -196,16 +203,44 @@ export const clearShortcutCacheResponseSchema = z.object({
 });
 export type ClearShortcutCacheResponse = z.infer<typeof clearShortcutCacheResponseSchema>;
 
-// Suggest-then-apply category grouping: scans "reference" bookmarks (either just the
+// Feeds the extension's "sync to browser" feature — a deliberately narrow slice of a bookmark
+// (just what decides where it lives in the browser's folder tree), not the full Bookmark shape.
+// `invalid` true means "this used to be synced and should now be removed from the browser" —
+// see the `invalid` column's comment in schema.ts for why a soft-delete flag, not a real DELETE,
+// is what lets a client notice a removal purely by diffing updatedAt against its last sync time.
+export const syncBookmarkSchema = z.object({
+  id: z.number(),
+  url: z.string(),
+  title: z.string(),
+  category: z.string().nullable(),
+  type: bookmarkTypeSchema,
+  invalid: z.boolean(),
+  updatedAt: z.string(),
+});
+export type SyncBookmark = z.infer<typeof syncBookmarkSchema>;
+
+export const syncBookmarksResponseSchema = z.object({
+  bookmarks: z.array(syncBookmarkSchema),
+  // The server's own clock at response time — the caller should store THIS as its new "last
+  // synced at", not its own Date.now(), so client/server clock drift never causes a bookmark
+  // to be silently skipped on the next sync.
+  syncedAt: z.string(),
+});
+export type SyncBookmarksResponse = z.infer<typeof syncBookmarksResponseSchema>;
+
+// Suggest-then-apply category grouping: scans bookmarks of one type (either just the
 // uncategorized ones, or every one — the caller's choice, since re-bucketing everything is a
 // deliberate reorganization, not the default) and proposes broad category buckets (travel,
 // news, computer science — big topic areas, not narrow tags) for the user to review, rather
-// than assigning anything outright.
+// than assigning anything outright. Scoped to a single type (matching whichever tab triggered
+// it) rather than the whole library, so a run started from Shortcuts never reaches into
+// References or vice versa.
 export const suggestCategoriesScopeSchema = z.enum(["uncategorized", "all"]);
 export type SuggestCategoriesScope = z.infer<typeof suggestCategoriesScopeSchema>;
 
 export const suggestCategoriesRequestSchema = z.object({
   scope: suggestCategoriesScopeSchema.default("uncategorized"),
+  type: bookmarkTypeSchema,
 });
 export type SuggestCategoriesRequest = z.infer<typeof suggestCategoriesRequestSchema>;
 
@@ -230,6 +265,7 @@ export const categorySuggestionJobSchema = z.object({
   id: z.number(),
   status: categorySuggestionJobStatusSchema,
   scope: suggestCategoriesScopeSchema,
+  type: bookmarkTypeSchema,
   suggestions: z.array(categorySuggestionSchema).nullable(),
   error: z.string().nullable(),
   // So a client that starts watching this job after it was already running (e.g. the page was
@@ -289,6 +325,68 @@ export const setCategoryDescriptionRequestSchema = z.object({
   description: z.string(),
 });
 export type SetCategoryDescriptionRequest = z.infer<typeof setCategoryDescriptionRequestSchema>;
+
+// Redefines the taxonomy itself — which categories should exist, at all — as opposed to
+// categorySuggestionSchema above, which only assigns bookmarks into whatever already exists.
+// A single plan run looks at the whole corpus at once, so results are grouped by kind rather
+// than emitted as one flat list: each kind maps to exactly one existing mutation the client
+// already has (create/rename/delete/describe), so applying a plan is just replaying those.
+export const categoryPlanAddSchema = z.object({
+  name: z.string().min(1),
+  description: z.string(),
+  reason: z.string(),
+});
+export type CategoryPlanAdd = z.infer<typeof categoryPlanAddSchema>;
+
+// "to" may itself be a brand-new name (a plain rename) or an existing category's name (merges
+// into it, same as PATCH /categories today) — the model doesn't need to distinguish the two.
+export const categoryPlanRenameSchema = z.object({
+  from: z.string().min(1),
+  to: z.string().min(1),
+  reason: z.string(),
+});
+export type CategoryPlanRename = z.infer<typeof categoryPlanRenameSchema>;
+
+// Removing (rather than renaming/merging) sends the category's bookmarks to Uncategorized —
+// only proposed for categories that are genuinely redundant or too sparse to keep, never as a
+// stand-in for "merge this into something better" (that's a rename).
+export const categoryPlanRemoveSchema = z.object({
+  name: z.string().min(1),
+  reason: z.string(),
+});
+export type CategoryPlanRemove = z.infer<typeof categoryPlanRemoveSchema>;
+
+export const categoryPlanDescribeSchema = z.object({
+  name: z.string().min(1),
+  description: z.string(),
+  reason: z.string(),
+});
+export type CategoryPlanDescribe = z.infer<typeof categoryPlanDescribeSchema>;
+
+export const categoryPlanSchema = z.object({
+  add: z.array(categoryPlanAddSchema),
+  rename: z.array(categoryPlanRenameSchema),
+  remove: z.array(categoryPlanRemoveSchema),
+  describe: z.array(categoryPlanDescribeSchema),
+});
+export type CategoryPlan = z.infer<typeof categoryPlanSchema>;
+
+export const startCategoryPlanResponseSchema = z.object({
+  jobId: z.number(),
+});
+export type StartCategoryPlanResponse = z.infer<typeof startCategoryPlanResponseSchema>;
+
+export const categoryPlanJobStatusSchema = z.enum(["running", "completed", "failed"]);
+export type CategoryPlanJobStatus = z.infer<typeof categoryPlanJobStatusSchema>;
+
+export const categoryPlanJobSchema = z.object({
+  id: z.number(),
+  status: categoryPlanJobStatusSchema,
+  plan: categoryPlanSchema.nullable(),
+  error: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type CategoryPlanJob = z.infer<typeof categoryPlanJobSchema>;
 
 // Same addressed-by-name convention as categories above, plus an explicit create — a project
 // can exist with zero bookmarks yet (you make it, then add things to it), unlike a category

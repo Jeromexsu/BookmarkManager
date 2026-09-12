@@ -81,8 +81,9 @@
       button.primary { background: var(--accent); border-color: var(--accent); color: white; }
       button.primary:hover:not(:disabled) { background: var(--accent-hover); }
 
-      #serverStatus, #progressText, #summaryText { font-size: 12px; color: var(--muted); margin-top: 8px; }
-      #serverStatus.success { color: var(--success); }
+      #serverStatus, #progressText, #summaryText, #syncStatus { font-size: 12px; color: var(--muted); margin-top: 8px; }
+      #serverStatus.success, #syncStatus.success { color: var(--success); }
+      #syncStatus.error { color: var(--error); }
 
       .progress-bar {
         height: 8px;
@@ -110,6 +111,19 @@
       <br />
       <button id="saveServer" class="primary">Save</button>
       <p id="serverStatus"></p>
+    </section>
+
+    <section>
+      <h2>Sync to browser</h2>
+      <p class="desc">
+        Mirrors your resolved bookmarks into this browser's native Bookmarks Toolbar (shortcuts)
+        and Other Bookmarks (references), organized into folders by category. The first sync
+        replaces everything currently in those two folders — download a backup first if you
+        want to be able to get back to what's there now.
+      </p>
+      <button id="downloadBackup">Download backup (all bookmarks)</button>
+      <button id="syncToBrowser" class="primary">Sync to browser</button>
+      <p id="syncStatus"></p>
     </section>
 
     <section>

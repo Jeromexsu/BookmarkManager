@@ -1,30 +1,36 @@
 import { useEffect, useState } from "react";
-import type { SuggestCategoriesScope } from "@bookmark-manager/shared";
+import type { BookmarkType, SuggestCategoriesScope } from "@bookmark-manager/shared";
 import { useApplyCategories, useCategorySuggestionJob, useStartSuggestCategories } from "./api";
 
 // Persisted (not component state) so the job survives a tab switch, a reload, or closing and
 // reopening the page entirely — the actual work lives server-side as a job row; this is just
-// "which job am I watching," which needs to outlive the component too.
-const STORAGE_KEY = "categorySuggestionJobId";
+// "which job am I watching," which needs to outlive the component too. Keyed by type since
+// References and Shortcuts each render their own instance of this component and must not read
+// or resume each other's job.
+function storageKey(type: BookmarkType): string {
+  return `categorySuggestionJobId:${type}`;
+}
 
-function readStoredJobId(): number | null {
-  const raw = localStorage.getItem(STORAGE_KEY);
+function readStoredJobId(type: BookmarkType): number | null {
+  const raw = localStorage.getItem(storageKey(type));
   const parsed = raw ? Number(raw) : NaN;
   return Number.isFinite(parsed) ? parsed : null;
 }
 
 interface CategorySuggestionsProps {
+  type: BookmarkType;
   // Keyed by id so the review panel can show titles without a second fetch — suggestions come
-  // back as bare ids, scoped server-side (uncategorized-only, or every reference), not just the
-  // current search results, so the lookup needs to cover the full unfiltered set.
+  // back as bare ids, scoped server-side (uncategorized-only, or every resolved bookmark of this
+  // view's type), not just the current search results, so the lookup needs to cover the full
+  // unfiltered set.
   bookmarkTitleById: Map<number, string>;
 }
 
-export function CategorySuggestions({ bookmarkTitleById }: CategorySuggestionsProps) {
+export function CategorySuggestions({ type, bookmarkTitleById }: CategorySuggestionsProps) {
   const startMutation = useStartSuggestCategories();
   const applyMutation = useApplyCategories();
   const [scope, setScope] = useState<SuggestCategoriesScope>("uncategorized");
-  const [jobId, setJobId] = useState<number | null>(readStoredJobId);
+  const [jobId, setJobId] = useState<number | null>(() => readStoredJobId(type));
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -50,15 +56,15 @@ export function CategorySuggestions({ bookmarkTitleById }: CategorySuggestionsPr
   }, [isRunning, jobQuery.data?.createdAt]);
 
   async function handleSuggest() {
-    const newJobId = await startMutation.mutateAsync(scope);
-    localStorage.setItem(STORAGE_KEY, String(newJobId));
+    const newJobId = await startMutation.mutateAsync({ scope, type });
+    localStorage.setItem(storageKey(type), String(newJobId));
     setExcluded(new Set());
     setExpanded(new Set());
     setJobId(newJobId);
   }
 
   function dismiss() {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(storageKey(type));
     setJobId(null);
   }
 
@@ -84,7 +90,7 @@ export function CategorySuggestions({ bookmarkTitleById }: CategorySuggestionsPr
 
   if (jobId === null) {
     return (
-      <div className="mb-4 p-3 rounded-lg border border-neutral-200 dark:border-neutral-800 flex items-center gap-3 flex-wrap">
+      <div className="p-3 rounded-lg border border-neutral-200 dark:border-neutral-800 flex items-center gap-3 flex-wrap">
         <div className="flex bg-neutral-100 dark:bg-neutral-800 rounded-md p-0.5">
           {(["uncategorized", "all"] as const).map((s) => (
             <button
@@ -96,7 +102,7 @@ export function CategorySuggestions({ bookmarkTitleById }: CategorySuggestionsPr
                   : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
               }`}
             >
-              {s === "uncategorized" ? "Uncategorized only" : "All references"}
+              {s === "uncategorized" ? "Uncategorized only" : type === "reference" ? "All references" : "All shortcuts"}
             </button>
           ))}
         </div>
@@ -106,18 +112,18 @@ export function CategorySuggestions({ bookmarkTitleById }: CategorySuggestionsPr
           disabled={startMutation.isPending}
           className="px-3 py-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 text-sm font-medium hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-50"
         >
-          Suggest categories
+          Auto-categorize
         </button>
 
-        {startMutation.isError && <p className="text-xs text-red-600">Couldn't start the suggestion job.</p>}
+        {startMutation.isError && <p className="text-xs text-red-600">Couldn't start auto-categorization.</p>}
       </div>
     );
   }
 
   if (isRunning) {
     return (
-      <div className="mb-4 p-3 rounded-lg border border-neutral-200 dark:border-neutral-800 flex items-center gap-3 flex-wrap">
-        <p className="text-sm font-medium">Suggesting categories… {elapsedSeconds}s</p>
+      <div className="p-3 rounded-lg border border-neutral-200 dark:border-neutral-800 flex items-center gap-3 flex-wrap">
+        <p className="text-sm font-medium">Auto-categorizing… {elapsedSeconds}s</p>
         <p className="text-xs text-neutral-400">
           Large batches can take up to a minute or two — it's working, not stuck. Feel free to switch tabs or come
           back later; the result will be waiting here.
@@ -134,8 +140,8 @@ export function CategorySuggestions({ bookmarkTitleById }: CategorySuggestionsPr
 
   if (jobQuery.data?.status === "failed") {
     return (
-      <div className="mb-4 p-3 rounded-lg border border-neutral-200 dark:border-neutral-800 flex items-center justify-between gap-3">
-        <p className="text-sm text-red-600">Couldn't suggest categories: {jobQuery.data.error ?? "unknown error"}</p>
+      <div className="p-3 rounded-lg border border-neutral-200 dark:border-neutral-800 flex items-center justify-between gap-3">
+        <p className="text-sm text-red-600">Couldn't auto-categorize: {jobQuery.data.error ?? "unknown error"}</p>
         <button
           onClick={dismiss}
           className="shrink-0 px-3 py-1 rounded-md text-xs font-medium text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
@@ -150,7 +156,7 @@ export function CategorySuggestions({ bookmarkTitleById }: CategorySuggestionsPr
 
   if (suggestions.length === 0) {
     return (
-      <div className="mb-4 p-3 rounded-lg border border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
+      <div className="p-3 rounded-lg border border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
         <p className="text-sm text-neutral-400">Nothing to categorize.</p>
         <button
           onClick={dismiss}
@@ -163,9 +169,9 @@ export function CategorySuggestions({ bookmarkTitleById }: CategorySuggestionsPr
   }
 
   return (
-    <div className="mb-4 p-3 rounded-lg border border-neutral-200 dark:border-neutral-800">
+    <div className="p-3 rounded-lg border border-neutral-200 dark:border-neutral-800">
       <div className="flex items-center justify-between mb-3">
-        <p className="text-sm font-medium">Suggested categories</p>
+        <p className="text-sm font-medium">Auto-categorize results</p>
         <div className="flex gap-2">
           <button
             onClick={handleApply}

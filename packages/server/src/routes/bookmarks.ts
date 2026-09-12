@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { eq, desc, inArray, isNull, and } from "drizzle-orm";
+import { eq, desc, inArray, isNull, and, or, gt } from "drizzle-orm";
 import {
   createBookmarkRequestSchema,
   previewBookmarkRequestSchema,
@@ -15,6 +15,8 @@ import {
   type CategorySuggestionJob,
   type SuggestCategoriesScope,
   type DetectShortcutsJob,
+  type BookmarkType,
+  type SyncBookmarksResponse,
 } from "@bookmark-manager/shared";
 import { db } from "../db/client.js";
 import {
@@ -156,11 +158,12 @@ const CATEGORY_SUGGESTION_CONCURRENCY = 4;
 // otherwise reshape the list (that's a separate, deliberate "reorganize categories" decision).
 // Chunked and concurrent so any one call's output stays small and a slow/failed chunk only
 // costs that chunk, not the whole run.
-async function runCategorySuggestionJob(jobId: number, scope: SuggestCategoriesScope) {
+//
+// Scoped to a single bookmark type — a run started from Shortcuts only ever reads/writes
+// shortcuts, never References, and vice versa.
+async function runCategorySuggestionJob(jobId: number, scope: SuggestCategoriesScope, type: BookmarkType) {
   try {
-    // Both reference and shortcut bookmarks are eligible — categorization isn't a
-    // reference-only concern, shortcuts carry a category too.
-    const baseCondition = and(inArray(bookmarks.type, ["reference", "shortcut"]), eq(bookmarks.status, "resolved"));
+    const baseCondition = and(eq(bookmarks.type, type), eq(bookmarks.status, "resolved"), eq(bookmarks.invalid, false));
     const condition = scope === "all" ? baseCondition : and(baseCondition, isNull(bookmarks.categoryId));
     const rows = await db.select().from(bookmarks).where(condition);
 
@@ -249,7 +252,7 @@ async function runDetectShortcutsJob(jobId: number) {
     const rows = await db
       .select()
       .from(bookmarks)
-      .where(and(eq(bookmarks.type, "reference"), eq(bookmarks.shortcutChecked, false)));
+      .where(and(eq(bookmarks.type, "reference"), eq(bookmarks.shortcutChecked, false), eq(bookmarks.invalid, false)));
 
     const candidates: ShortcutCandidate[] = [];
     const queue = rows.filter((row) => isRootUrl(row.url));
@@ -337,6 +340,8 @@ async function resolveBookmarkSave(
   reply: FastifyReply
 ) {
   const patch: Partial<typeof bookmarks.$inferInsert> = { status: "resolved" };
+  // A save that lands on a soft-deleted row is the user actively re-adding this URL — revive it.
+  if (existingRow.invalid) patch.invalid = false;
 
   if (incoming.title && incoming.title !== existing.title) patch.title = incoming.title;
   if (incoming.content) patch.content = incoming.content;
@@ -371,6 +376,10 @@ async function mergeBookmarkSave(
 ) {
   const patch: Partial<typeof bookmarks.$inferInsert> = {};
   const conflicts: BookmarkConflict[] = [];
+  // A save that lands on a soft-deleted row is the user actively re-adding this URL — revive
+  // it. Set unconditionally (not just when other fields differ) so this alone still triggers
+  // the update below even if nothing else about the incoming save actually changed.
+  if (existingRow.invalid) patch.invalid = false;
 
   if (incoming.content && !existing.content) patch.content = incoming.content;
   if (incoming.favicon && !existing.favicon) patch.favicon = incoming.favicon;
@@ -429,24 +438,89 @@ async function mergeBookmarkSave(
 
 export async function bookmarkRoutes(app: FastifyInstance) {
   app.get("/bookmarks", async () => {
-    const rows = await db.select().from(bookmarks).orderBy(desc(bookmarks.createdAt));
+    const rows = await db.select().from(bookmarks).where(eq(bookmarks.invalid, false)).orderBy(desc(bookmarks.createdAt));
     return { bookmarks: await hydrateBookmarks(rows) };
+  });
+
+  // Feeds the extension's "sync to browser" — a narrow, purpose-built feed rather than reusing
+  // GET /bookmarks: only the fields that decide browser folder placement, and it deliberately
+  // includes invalid (soft-deleted) rows so the caller can remove them from the browser too.
+  // No `since` (or an unparseable one) means "everything" — the client's own signal for "I've
+  // never synced before."
+  app.get("/bookmarks/sync", async (request) => {
+    const sinceParam = (request.query as { since?: string }).since;
+    const since = sinceParam && !isNaN(Date.parse(sinceParam)) ? new Date(sinceParam) : new Date(0);
+
+    const rows = await db
+      .select({
+        id: bookmarks.id,
+        url: bookmarks.url,
+        title: bookmarks.title,
+        type: bookmarks.type,
+        invalid: bookmarks.invalid,
+        updatedAt: bookmarks.updatedAt,
+        category: categories.name,
+      })
+      .from(bookmarks)
+      .leftJoin(categories, eq(bookmarks.categoryId, categories.id))
+      .where(and(gt(bookmarks.updatedAt, since), or(eq(bookmarks.invalid, true), eq(bookmarks.status, "resolved"))));
+
+    return {
+      bookmarks: rows.map((r) => ({
+        id: r.id,
+        url: r.url,
+        title: r.title,
+        category: r.category,
+        type: r.type as BookmarkType,
+        invalid: r.invalid,
+        updatedAt: r.updatedAt.toISOString(),
+      })),
+      syncedAt: new Date().toISOString(),
+    } satisfies SyncBookmarksResponse;
   });
 
   // Stateless: generates tags/summary for the caller to show a user for review, without
   // saving anything. Used by the extension's collect-then-confirm flow. Category/project are
   // never AI-generated, so they're not part of this response — the user sets them directly.
+  // "Auto-fill", not "auto-tag" — besides tags/summary this also guesses a category (from the
+  // existing list only, same as classifyChunk elsewhere — never invents one) and whether the
+  // page is a shortcut vs. a reference, all overridable in the extension's form before saving.
+  // Project is deliberately excluded: that's a pure user-curated grouping, not something to guess.
   app.post("/bookmarks/preview", async (request, reply) => {
     const parsed = previewBookmarkRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
+    const { title, content } = parsed.data;
 
     try {
-      return await generateTags(parsed.data.content);
+      const categoryList = await db
+        .select({ name: categories.name, description: categories.description })
+        .from(categories);
+
+      const [tagging, shortcutResult, categoryAssignments] = await Promise.all([
+        generateTags(content),
+        classifyShortcut(title, content),
+        categoryList.length > 0 ? classifyChunk([{ id: 0, title, tags: [] }], categoryList) : Promise.resolve(new Map<string, number[]>()),
+      ]);
+
+      let category: string | null = null;
+      for (const [name, ids] of categoryAssignments) {
+        if (ids.includes(0)) {
+          category = name;
+          break;
+        }
+      }
+
+      return {
+        tags: tagging.tags,
+        summary: tagging.summary,
+        category,
+        isShortcut: shortcutResult.isShortcut,
+      };
     } catch (err) {
-      app.log.error(err, "Preview tagging failed");
-      return reply.code(502).send({ error: "Failed to generate tags" });
+      app.log.error(err, "Preview failed");
+      return reply.code(502).send({ error: "Failed to generate preview" });
     }
   });
 
@@ -473,7 +547,7 @@ export async function bookmarkRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
 
-    const { url, title, content, favicon, category, project, tags: confirmedTags, summary } = parsed.data;
+    const { url, title, content, favicon, category, project, tags: confirmedTags, summary, type } = parsed.data;
 
     const [existingRow] = await db.select().from(bookmarks).where(eq(bookmarks.url, url));
     if (existingRow) {
@@ -496,6 +570,7 @@ export async function bookmarkRoutes(app: FastifyInstance) {
           categoryId,
           projectId,
           status: "resolved",
+          type: type ?? "reference",
         })
         .returning();
 
@@ -575,9 +650,12 @@ export async function bookmarkRoutes(app: FastifyInstance) {
     return bookmark;
   });
 
+  // Soft delete: the row stays (invalid = true), never a hard DELETE — the trigger-bumped
+  // updatedAt on that flip is how the extension's browser sync notices a removal without
+  // keeping its own list of everything it's ever synced. Every normal read filters this out.
   app.delete("/bookmarks/:id", async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
-    const [row] = await db.delete(bookmarks).where(eq(bookmarks.id, id)).returning();
+    const [row] = await db.update(bookmarks).set({ invalid: true }).where(eq(bookmarks.id, id)).returning();
     if (!row) {
       return reply.code(404).send({ error: "Bookmark not found" });
     }
@@ -640,8 +718,9 @@ export async function bookmarkRoutes(app: FastifyInstance) {
 
   // Suggest-then-apply, same convention as detect/confirm-shortcuts above — never assigns a
   // category outright. Scope defaults to just-uncategorized (matching the web app's
-  // "Uncategorized" bucket); "all" re-buckets every resolved reference, a deliberate
-  // reorganization the caller opts into rather than something that happens by default.
+  // "Uncategorized" bucket); "all" re-buckets every resolved bookmark of the given type, a
+  // deliberate reorganization the caller opts into rather than something that happens by
+  // default. Scoped to one bookmark type per run (see runCategorySuggestionJob).
   //
   // Runs as a background job (like /import above), not a single blocking response — the model
   // call can take a minute or two, and this responds immediately with a jobId so the caller can
@@ -654,10 +733,10 @@ export async function bookmarkRoutes(app: FastifyInstance) {
 
     const [job] = await db
       .insert(categorySuggestionJobs)
-      .values({ status: "running", scope: parsed.data.scope })
+      .values({ status: "running", scope: parsed.data.scope, type: parsed.data.type })
       .returning();
 
-    runCategorySuggestionJob(job.id, parsed.data.scope).catch((err) => {
+    runCategorySuggestionJob(job.id, parsed.data.scope, parsed.data.type).catch((err) => {
       app.log.error(err, `Category suggestion job ${job.id} failed`);
     });
 
@@ -674,6 +753,7 @@ export async function bookmarkRoutes(app: FastifyInstance) {
       id: job.id,
       status: job.status as CategorySuggestionJob["status"],
       scope: job.scope as CategorySuggestionJob["scope"],
+      type: job.type as CategorySuggestionJob["type"],
       suggestions: job.suggestions ?? null,
       error: job.error,
       createdAt: job.createdAt.toISOString(),

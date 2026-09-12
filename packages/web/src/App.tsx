@@ -5,8 +5,9 @@ import { ShortcutView } from "./ShortcutView";
 import { ProjectsView } from "./ProjectsView";
 import { PendingView } from "./PendingView";
 import { SearchResultsView } from "./SearchResultsView";
+import { SettingsView } from "./SettingsView";
 
-type View = "references" | "shortcuts" | "projects" | "pending";
+type View = "references" | "shortcuts" | "projects" | "pending" | "settings";
 
 export function App() {
   const { data: bookmarks = [], error } = useBookmarks();
@@ -35,7 +36,7 @@ export function App() {
           <div className="flex items-center gap-6">
             <h1 className="text-lg font-bold">🔖 Bookmark Manager</h1>
             <nav className="flex gap-1 bg-neutral-100 dark:bg-neutral-800 rounded-lg p-1">
-              {(["references", "shortcuts", "projects", "pending"] as const).map((v) => (
+              {(["references", "shortcuts", "projects", "pending", "settings"] as const).map((v) => (
                 <button
                   key={v}
                   onClick={() => setView(v)}
@@ -51,7 +52,9 @@ export function App() {
                       ? "🔗 Shortcuts"
                       : v === "projects"
                         ? "📦 Projects"
-                        : "⏳ Pending"}
+                        : v === "pending"
+                          ? "⏳ Pending"
+                          : "⚙️ Settings"}
                 </button>
               ))}
             </nav>
@@ -97,6 +100,7 @@ export function App() {
           {view === "shortcuts" && <ShortcutView shortcuts={shortcuts} categories={categories} />}
           {view === "projects" && <ProjectsView bookmarks={resolved} projects={projects} />}
           {view === "pending" && <PendingView pending={pending} />}
+          {view === "settings" && <SettingsView bookmarks={bookmarks} />}
         </>
       )}
     </div>

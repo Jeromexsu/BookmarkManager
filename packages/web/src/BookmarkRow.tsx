@@ -5,9 +5,6 @@ import { Favicon } from "./Favicon";
 
 interface BookmarkRowProps {
   bookmark: Bookmark;
-  // Shown only in the Pending view — an unresolved item might just be a shortcut import
-  // couldn't scrape, not something that needs tags at all.
-  showResolveActions?: boolean;
   // Shown only in the Category view — every OTHER existing category, for a one-click move
   // (distinct from the free-text category field, which is for typing/creating one).
   moveToCategories?: string[];
@@ -17,12 +14,7 @@ interface BookmarkRowProps {
   onRemoveFromProject?: () => void;
 }
 
-export function BookmarkRow({
-  bookmark,
-  showResolveActions = false,
-  moveToCategories,
-  onRemoveFromProject,
-}: BookmarkRowProps) {
+export function BookmarkRow({ bookmark, moveToCategories, onRemoveFromProject }: BookmarkRowProps) {
   const updateMutation = useUpdateBookmark();
   const deleteMutation = useDeleteBookmark();
   const suggestTitleMutation = useSuggestTitle();
@@ -75,12 +67,6 @@ export function BookmarkRow({
     }
   }
 
-  // Explicit resolve for the "this is fine as-is, no tags needed" case — adding tags/a summary
-  // resolves it too, as a side effect, but that's a convenience, not the only path.
-  function handleMarkResolved() {
-    updateMutation.mutate({ id: bookmark.id, patch: { resolved: true } });
-  }
-
   function startEditTitle() {
     setTitleDraft(bookmark.title);
     setIsEditingTitle(true);
@@ -101,7 +87,7 @@ export function BookmarkRow({
   }
 
   return (
-    <li className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 flex gap-3">
+    <li className="border border-neutral-200 dark:border-neutral-800 rounded-xl bg-neutral-50 dark:bg-neutral-900 shadow-sm hover:shadow-md transition-shadow p-4 flex gap-3">
       <div className="mt-1">
         <Favicon favicon={bookmark.favicon} title={bookmark.title} size="sm" />
       </div>
@@ -151,14 +137,6 @@ export function BookmarkRow({
                 Rename
               </button>
             )}
-            {showResolveActions && (
-              <button
-                onClick={handleMarkResolved}
-                className="text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 text-xs font-medium whitespace-nowrap"
-              >
-                ✓ Mark resolved
-              </button>
-            )}
             {/* BookmarkRow only ever renders type="reference" bookmarks (shortcuts use
                 ShortcutTile) — this is the reference->shortcut half of the conversion; the
                 other direction lives on ShortcutTile's "Not a shortcut" button. */}
@@ -178,14 +156,11 @@ export function BookmarkRow({
         </div>
         <div className="text-xs text-neutral-500 truncate">{bookmark.url}</div>
 
-        {/* Only the failure reason is worth a badge here — "pending" is already the whole point
-            of the view this card lives in, so repeating it on every card is just noise. */}
-        {bookmark.status === "failed" && bookmark.tags.length === 0 && !bookmark.summary && (
-          <div className="text-xs text-red-600 mt-1">Tagging failed</div>
-        )}
         {bookmark.summary && <p className="text-sm mt-1.5 text-neutral-700 dark:text-neutral-300">{bookmark.summary}</p>}
 
-        <div className="flex flex-wrap items-center gap-1.5 mt-2">
+        <hr className="my-4 border-neutral-200 dark:border-neutral-800" />
+
+        <div className="flex flex-wrap items-center gap-2">
           <input
             list="category-options"
             value={categoryDraft}
@@ -194,10 +169,7 @@ export function BookmarkRow({
             placeholder="Category"
             className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300 outline-none w-36 placeholder:text-amber-400"
           />
-        </div>
-
-        {moveToCategories && moveToCategories.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+          {moveToCategories && moveToCategories.length > 0 && (
             <select
               onChange={handleMoveTo}
               defaultValue=""
@@ -213,21 +185,10 @@ export function BookmarkRow({
                 </option>
               ))}
             </select>
-          </div>
-        )}
-
-        <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-          <input
-            list="project-options"
-            value={projectDraft}
-            onChange={(e) => setProjectDraft(e.target.value)}
-            onBlur={commitProject}
-            placeholder="Project"
-            className="text-xs px-2 py-0.5 rounded-full bg-violet-50 text-violet-800 dark:bg-violet-950 dark:text-violet-300 outline-none w-24 placeholder:text-violet-400"
-          />
+          )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+        <div className="flex flex-wrap items-center gap-2 mt-2">
           {bookmark.tags.map((tag) => (
             <span
               key={tag}
@@ -251,6 +212,17 @@ export function BookmarkRow({
             onBlur={addTag}
             placeholder="+ tag"
             className="text-xs px-2 py-0.5 w-16 outline-none bg-transparent text-neutral-500"
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 mt-2">
+          <input
+            list="project-options"
+            value={projectDraft}
+            onChange={(e) => setProjectDraft(e.target.value)}
+            onBlur={commitProject}
+            placeholder="Project"
+            className="text-xs px-2 py-0.5 rounded-full bg-violet-50 text-violet-800 dark:bg-violet-950 dark:text-violet-300 outline-none w-24 placeholder:text-violet-400"
           />
         </div>
       </div>

@@ -124,7 +124,7 @@
         margin-bottom: 4px;
       }
 
-      input, textarea {
+      input, textarea, select {
         width: 100%;
         padding: 7px 10px;
         border: 1px solid transparent;
@@ -137,16 +137,18 @@
         transition: box-shadow 0.15s ease, border-color 0.15s ease;
       }
 
+      select { cursor: pointer; }
+
       input::placeholder, textarea::placeholder { color: var(--muted); }
 
-      input:focus, textarea:focus {
+      input:focus, textarea:focus, select:focus {
         outline: none;
         border-color: var(--accent);
         box-shadow: var(--shadow-focus);
         background: var(--bg);
       }
 
-      input:disabled, textarea:disabled { opacity: 0.55; }
+      input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 
       #url { font-size: 11px; color: var(--muted); }
       #content { height: 62px; overflow-y: auto; font-size: 12px; }
@@ -242,28 +244,6 @@
         padding: 3px 4px;
       }
       #tagInput:focus { box-shadow: none; }
-
-      .combobox { position: relative; }
-      .combobox-menu {
-        position: absolute;
-        top: calc(100% + 4px);
-        left: 0;
-        right: 0;
-        background: var(--bg);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        box-shadow: 0 6px 16px rgba(20, 20, 30, 0.12);
-        max-height: 140px;
-        overflow-y: auto;
-        z-index: 10;
-      }
-      .combobox-item {
-        padding: 6px 10px;
-        font-size: 12.5px;
-        cursor: pointer;
-      }
-      .combobox-item:hover { background: var(--bg-subtle); }
-      .combobox-item.create { color: var(--accent); font-weight: 600; }
 
       .actions {
         display: flex;
@@ -448,9 +428,17 @@
     </div>
 
     <div class="field">
+      <label>Type</label>
+      <div class="tabs">
+        <button id="typeReference" type="button" class="tab active">📄 Reference</button>
+        <button id="typeShortcut" type="button" class="tab">🔗 Shortcut</button>
+      </div>
+    </div>
+
+    <div class="field">
       <div class="field-header">
         <label for="tagInput">Tags</label>
-        <button id="autoTag" type="button" class="link-btn">✨ Auto-tag</button>
+        <button id="autoFill" type="button" class="link-btn">✨ Auto-fill</button>
       </div>
       <div id="tagsContainer" class="tags-input">
         <input id="tagInput" type="text" placeholder="Add a tag…" />
@@ -470,17 +458,15 @@
     <div class="field-row">
       <div class="field">
         <label for="categoryInput">Category</label>
-        <div class="combobox" id="categoryCombobox">
-          <input id="categoryInput" type="text" placeholder="e.g. coding" autocomplete="off" />
-          <div class="combobox-menu" id="categoryMenu" hidden></div>
-        </div>
+        <select id="categoryInput">
+          <option value="">No category</option>
+        </select>
       </div>
       <div class="field">
         <label for="projectInput">Project <span class="hint">(optional)</span></label>
-        <div class="combobox" id="projectCombobox">
-          <input id="projectInput" type="text" placeholder="No project" autocomplete="off" />
-          <div class="combobox-menu" id="projectMenu" hidden></div>
-        </div>
+        <select id="projectInput">
+          <option value="">No project</option>
+        </select>
       </div>
     </div>
 

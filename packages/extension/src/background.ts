@@ -8,14 +8,19 @@ interface ExtractedPage {
   favicon: string | null;
 }
 
-interface TagSuggestion {
+interface AutoFillResult {
   tags: string[];
   summary: string;
+  category: string | null;
+  isShortcut: boolean;
 }
 
-interface BookmarkPayload extends ExtractedPage, TagSuggestion {
+interface BookmarkPayload extends ExtractedPage {
+  tags: string[];
+  summary: string;
   category?: string;
   project?: string;
+  type?: "reference" | "shortcut";
 }
 
 interface BookmarkSummary {
@@ -63,13 +68,13 @@ async function extractCurrentTab(): Promise<Result<ExtractedPage>> {
   return { ok: true, data: { ...extracted, favicon: tab.favIconUrl ?? null } };
 }
 
-async function previewTags(page: { url: string; title: string; content: string }): Promise<Result<TagSuggestion>> {
+async function autoFillBookmark(page: { url: string; title: string; content: string }): Promise<Result<AutoFillResult>> {
   const serverUrl = await getServerUrl();
   if (!serverUrl) {
     return { ok: false, error: "Set your server URL in the extension settings first." };
   }
   if (!page.content.trim()) {
-    return { ok: false, error: "No page content to tag." };
+    return { ok: false, error: "No page content to work with." };
   }
 
   const res = await fetch(`${serverUrl.replace(/\/$/, "")}/api/bookmarks/preview`, {
@@ -178,7 +183,7 @@ async function resolveConflict(bookmarkId: number, patch: Record<string, string 
 
 type IncomingMessage =
   | { type: "EXTRACT_CURRENT_TAB" }
-  | { type: "PREVIEW_TAGS"; payload: { url: string; title: string; content: string } }
+  | { type: "AUTO_FILL"; payload: { url: string; title: string; content: string } }
   | { type: "LIST_CATEGORIES" }
   | { type: "LIST_PROJECTS" }
   | { type: "LIST_BOOKMARKS" }
@@ -189,7 +194,7 @@ type IncomingMessage =
 browser.runtime.onMessage.addListener((raw: unknown) => {
   const message = raw as IncomingMessage;
   if (message?.type === "EXTRACT_CURRENT_TAB") return extractCurrentTab();
-  if (message?.type === "PREVIEW_TAGS") return previewTags(message.payload);
+  if (message?.type === "AUTO_FILL") return autoFillBookmark(message.payload);
   if (message?.type === "LIST_CATEGORIES") return fetchNames("categories");
   if (message?.type === "LIST_PROJECTS") return fetchNames("projects");
   if (message?.type === "LIST_BOOKMARKS") return listBookmarks();

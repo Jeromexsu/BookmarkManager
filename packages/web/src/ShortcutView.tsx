@@ -9,7 +9,7 @@ import {
 } from "./api";
 import { GroupedCardView } from "./GroupedCardView";
 import { ShortcutTile } from "./ShortcutTile";
-import { NewCategoryForm } from "./NewCategoryForm";
+import { CategorySuggestions } from "./CategorySuggestions";
 
 // Persisted (not component state) so a detection run survives a tab switch, reload, or closing
 // and reopening the page — same reasoning as CategorySuggestions' STORAGE_KEY.
@@ -42,6 +42,10 @@ export function ShortcutView({ shortcuts, categories }: ShortcutViewProps) {
     () => new Map(categoriesFull.map((c) => [c.name, c.description])),
     [categoriesFull]
   );
+
+  // Used for the Auto-categorize review panel's title lookup — assignments come back as bare
+  // ids scoped server-side, not tied to anything shown in this view directly.
+  const bookmarkTitleById = useMemo(() => new Map(shortcuts.map((s) => [s.id, s.title])), [shortcuts]);
 
   const jobQuery = useDetectShortcutsJob(jobId);
   const isRunning = jobId !== null && jobQuery.data?.status !== "completed" && jobQuery.data?.status !== "failed";
@@ -102,43 +106,46 @@ export function ShortcutView({ shortcuts, categories }: ShortcutViewProps) {
 
   return (
     <div className="flex-1 min-w-0 p-4 overflow-y-auto">
-      <div className="flex items-center justify-end gap-2 mb-3">
-        <button
-          onClick={() => clearCacheMutation.mutate()}
-          disabled={clearCacheMutation.isPending}
-          title="Forget which reference bookmarks were already ruled out, so the next scan reconsiders everything"
-          className="shrink-0 px-3 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 text-xs font-medium text-neutral-500 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-50"
-        >
-          {clearCacheMutation.isPending ? "Clearing…" : "Clear scan cache"}
-        </button>
-        {jobId === null && (
-          <button
-            onClick={handleDetect}
-            disabled={startMutation.isPending}
-            className="shrink-0 px-3 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 text-sm font-medium hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-50"
-          >
-            Detect shortcuts
-          </button>
-        )}
-      </div>
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <nav className="flex gap-1 bg-neutral-100 dark:bg-neutral-800 rounded-lg p-1 w-fit shrink-0">
+            {(["category", "all"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setSubView(v)}
+                className={`text-xs font-semibold px-3 py-1.5 rounded-md capitalize transition ${
+                  subView === v
+                    ? "bg-white dark:bg-neutral-950 shadow-sm"
+                    : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+                }`}
+              >
+                {v}
+              </button>
+            ))}
+          </nav>
 
-      <div className="flex items-center justify-between mb-3">
-        <nav className="flex gap-1 bg-neutral-100 dark:bg-neutral-800 rounded-lg p-1 w-fit">
-          {(["category", "all"] as const).map((v) => (
+          {subView === "category" && <CategorySuggestions type="shortcut" bookmarkTitleById={bookmarkTitleById} />}
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => clearCacheMutation.mutate()}
+            disabled={clearCacheMutation.isPending}
+            title="Forget which reference bookmarks were already ruled out, so the next scan reconsiders everything"
+            className="shrink-0 px-3 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 text-xs font-medium text-neutral-500 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-50"
+          >
+            {clearCacheMutation.isPending ? "Clearing…" : "Clear scan cache"}
+          </button>
+          {jobId === null && (
             <button
-              key={v}
-              onClick={() => setSubView(v)}
-              className={`text-xs font-semibold px-3 py-1.5 rounded-md capitalize transition ${
-                subView === v
-                  ? "bg-white dark:bg-neutral-950 shadow-sm"
-                  : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
-              }`}
+              onClick={handleDetect}
+              disabled={startMutation.isPending}
+              className="shrink-0 px-3 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 text-sm font-medium hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-50"
             >
-              {v}
+              Detect shortcuts
             </button>
-          ))}
-        </nav>
-        {subView === "category" && <NewCategoryForm />}
+          )}
+        </div>
       </div>
 
       {clearCacheMutation.isSuccess && (
@@ -236,7 +243,7 @@ export function ShortcutView({ shortcuts, categories }: ShortcutViewProps) {
           categories={categories}
           categoryDescriptions={categoryDescriptions}
           renderItems={(items, moveToCategories) => (
-            <div className="flex flex-wrap gap-3 pl-6 pb-3">
+            <div className="flex flex-wrap gap-3 pl-6 pt-2 pb-3">
               {items.map((s) => (
                 <ShortcutTile key={s.id} bookmark={s} moveToCategories={moveToCategories} />
               ))}

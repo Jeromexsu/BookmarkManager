@@ -1,13 +1,117 @@
 import type { FastifyInstance } from "fastify";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, and, inArray } from "drizzle-orm";
 import {
   renameCategoryRequestSchema,
   deleteCategoryRequestSchema,
   createCategoryRequestSchema,
   setCategoryDescriptionRequestSchema,
+  type CategoryPlanJob,
 } from "@bookmark-manager/shared";
 import { db } from "../db/client.js";
-import { bookmarks, categories } from "../db/schema.js";
+import { bookmarks, categories, tags, bookmarkTags, categoryPlanJobs } from "../db/schema.js";
+import { planCategoryList, type CategorySample } from "../ai/planCategories.js";
+
+const UNCATEGORIZED = "Uncategorized";
+const SAMPLE_TITLES_PER_CATEGORY = 15;
+const TOP_TAGS_PER_CATEGORY = 8;
+
+// Builds the per-category *samples* the model reasons over — full titles/tags for every
+// resolved bookmark would make the prompt grow without bound as the corpus grows. Mirrors the
+// "fetch everything, group in JS" approach runCategorySuggestionJob already uses, since the
+// corpus is small enough (hundreds, not millions) that this stays cheap.
+async function buildCategorySamples(): Promise<CategorySample[]> {
+  const categoryRows = await db.select().from(categories).orderBy(asc(categories.name));
+
+  const resolvedRows = await db
+    .select({ id: bookmarks.id, title: bookmarks.title, categoryId: bookmarks.categoryId })
+    .from(bookmarks)
+    .where(and(inArray(bookmarks.type, ["reference", "shortcut"]), eq(bookmarks.status, "resolved"), eq(bookmarks.invalid, false)));
+
+  const ids = resolvedRows.map((r) => r.id);
+  const tagRows = ids.length
+    ? await db
+        .select({ bookmarkId: bookmarkTags.bookmarkId, name: tags.name })
+        .from(bookmarkTags)
+        .innerJoin(tags, eq(bookmarkTags.tagId, tags.id))
+        .where(inArray(bookmarkTags.bookmarkId, ids))
+    : [];
+  const tagsByBookmark = new Map<number, string[]>();
+  for (const { bookmarkId, name } of tagRows) {
+    const list = tagsByBookmark.get(bookmarkId) ?? [];
+    list.push(name);
+    tagsByBookmark.set(bookmarkId, list);
+  }
+
+  type Group = { titles: string[]; tagCounts: Map<string, number> };
+  const grouped = new Map<number | null, Group>();
+  for (const row of resolvedRows) {
+    const group: Group = grouped.get(row.categoryId) ?? { titles: [], tagCounts: new Map() };
+    if (group.titles.length < SAMPLE_TITLES_PER_CATEGORY) group.titles.push(row.title);
+    for (const tag of tagsByBookmark.get(row.id) ?? []) {
+      group.tagCounts.set(tag, (group.tagCounts.get(tag) ?? 0) + 1);
+    }
+    grouped.set(row.categoryId, group);
+  }
+
+  function topTags(tagCounts: Map<string, number>): string[] {
+    return [...tagCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, TOP_TAGS_PER_CATEGORY)
+      .map(([tag]) => tag);
+  }
+
+  function countFor(categoryId: number | null): number {
+    return resolvedRows.filter((r) => r.categoryId === categoryId).length;
+  }
+
+  const samples: CategorySample[] = categoryRows.map((c) => {
+    const group: Group = grouped.get(c.id) ?? { titles: [], tagCounts: new Map() };
+    return {
+      name: c.name,
+      description: c.description,
+      count: countFor(c.id),
+      sampleTitles: group.titles,
+      topTags: topTags(group.tagCounts),
+    };
+  });
+
+  const uncategorized = grouped.get(null);
+  if (uncategorized) {
+    samples.push({
+      name: UNCATEGORIZED,
+      description: null,
+      count: countFor(null),
+      sampleTitles: uncategorized.titles,
+      topTags: topTags(uncategorized.tagCounts),
+    });
+  }
+
+  return samples;
+}
+
+// Runs in the background after POST /categories/plan already responded with a jobId — same
+// job-persistence reasoning as runCategorySuggestionJob in bookmarks.ts. Recommends changes to
+// the taxonomy itself (add/rename/remove/describe); it never applies them — the caller reviews
+// and applies via the existing create/rename/delete/describe endpoints, one call per accepted
+// item.
+async function runCategoryPlanJob(jobId: number) {
+  try {
+    const samples = await buildCategorySamples();
+
+    if (samples.length === 0) {
+      await db.update(categoryPlanJobs).set({ status: "completed", plan: { add: [], rename: [], remove: [], describe: [] } }).where(eq(categoryPlanJobs.id, jobId));
+      return;
+    }
+
+    const plan = await planCategoryList(samples);
+    await db.update(categoryPlanJobs).set({ status: "completed", plan }).where(eq(categoryPlanJobs.id, jobId));
+  } catch (err) {
+    await db
+      .update(categoryPlanJobs)
+      .set({ status: "failed", error: err instanceof Error ? err.message : "Unknown error" })
+      .where(eq(categoryPlanJobs.id, jobId));
+  }
+}
 
 export async function categoryRoutes(app: FastifyInstance) {
   app.get("/categories", async () => {
@@ -117,5 +221,35 @@ export async function categoryRoutes(app: FastifyInstance) {
     await db.update(bookmarks).set({ categoryId: null }).where(eq(bookmarks.categoryId, row.id));
     await db.delete(categories).where(eq(categories.id, row.id));
     return reply.code(204).send();
+  });
+
+  // Recommends a revised category list — as opposed to /bookmarks/suggest-categories, which
+  // only assigns bookmarks into categories that already exist. Runs as a background job (the
+  // model call can take a minute or two): responds immediately with a jobId, the caller polls
+  // GET /categories/plan/:id for the result. Applying an accepted plan is left to the client —
+  // it's just a sequence of calls to the create/rename/delete/description endpoints above.
+  app.post("/categories/plan", async (_request, reply) => {
+    const [job] = await db.insert(categoryPlanJobs).values({ status: "running" }).returning();
+
+    runCategoryPlanJob(job.id).catch((err) => {
+      app.log.error(err, `Category plan job ${job.id} failed`);
+    });
+
+    return reply.code(201).send({ jobId: job.id });
+  });
+
+  app.get("/categories/plan/:id", async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    const [job] = await db.select().from(categoryPlanJobs).where(eq(categoryPlanJobs.id, id));
+    if (!job) {
+      return reply.code(404).send({ error: "Plan job not found" });
+    }
+    return {
+      id: job.id,
+      status: job.status as CategoryPlanJob["status"],
+      plan: job.plan ?? null,
+      error: job.error,
+      createdAt: job.createdAt.toISOString(),
+    } satisfies CategoryPlanJob;
   });
 }

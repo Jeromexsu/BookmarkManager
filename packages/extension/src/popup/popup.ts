@@ -21,14 +21,14 @@ const faviconImg = document.getElementById("favicon") as HTMLImageElement;
 const titleInput = document.getElementById("title") as HTMLInputElement;
 const urlInput = document.getElementById("url") as HTMLInputElement;
 const contentInput = document.getElementById("content") as HTMLTextAreaElement;
-const categoryInput = document.getElementById("categoryInput") as HTMLInputElement;
-const categoryMenu = document.getElementById("categoryMenu") as HTMLDivElement;
-const projectInput = document.getElementById("projectInput") as HTMLInputElement;
-const projectMenu = document.getElementById("projectMenu") as HTMLDivElement;
+const categoryInput = document.getElementById("categoryInput") as HTMLSelectElement;
+const projectInput = document.getElementById("projectInput") as HTMLSelectElement;
 const tagsContainer = document.getElementById("tagsContainer") as HTMLDivElement;
 const tagInput = document.getElementById("tagInput") as HTMLInputElement;
 const summaryInput = document.getElementById("summary") as HTMLTextAreaElement;
-const autoTagBtn = document.getElementById("autoTag") as HTMLButtonElement;
+const typeReferenceBtn = document.getElementById("typeReference") as HTMLButtonElement;
+const typeShortcutBtn = document.getElementById("typeShortcut") as HTMLButtonElement;
+const autoFillBtn = document.getElementById("autoFill") as HTMLButtonElement;
 const saveBtn = document.getElementById("save") as HTMLButtonElement;
 const optionsLink = document.getElementById("options")!;
 const manageBtn = document.getElementById("manage") as HTMLButtonElement;
@@ -55,6 +55,7 @@ let tags: string[] = [];
 let favicon: string | null = null;
 let categoryNames: string[] = [];
 let projectNames: string[] = [];
+let currentType: "reference" | "shortcut" = "reference";
 
 interface BookmarkSummary {
   id: number;
@@ -115,53 +116,31 @@ tagsContainer.addEventListener("click", (e) => {
   if (e.target === tagsContainer) tagInput.focus();
 });
 
-// A combobox: click/focus shows all existing options, typing filters them, and typed text
-// that matches nothing existing shows a "+ Add" hint — since saving just sends whatever text
-// is in the field and the server upserts it by name, "adding" needs no extra confirmation step.
-function setupCombobox(input: HTMLInputElement, menu: HTMLDivElement, getOptions: () => string[]) {
-  function closeMenu() {
-    menu.hidden = true;
+// Category and Project are pick-from-the-existing-list only — no typing a new one into
+// existence here. Categories are defined in Settings (see SettingsView in the web app); a
+// project comes into being by creating it there too. The select keeps its first "No
+// category"/"No project" placeholder option and everything else gets replaced on each refresh.
+function populateSelect(select: HTMLSelectElement, options: string[]) {
+  const previousValue = select.value;
+  const placeholder = select.options[0];
+  select.innerHTML = "";
+  select.appendChild(placeholder);
+  for (const opt of options) {
+    const option = document.createElement("option");
+    option.value = opt;
+    option.textContent = opt;
+    select.appendChild(option);
   }
-
-  function render() {
-    const query = input.value.trim().toLowerCase();
-    const options = getOptions();
-    const filtered = query ? options.filter((o) => o.toLowerCase().includes(query)) : options;
-
-    menu.innerHTML = "";
-    for (const opt of filtered) {
-      const item = document.createElement("div");
-      item.className = "combobox-item";
-      item.textContent = opt;
-      item.addEventListener("mousedown", (e) => {
-        e.preventDefault();
-        input.value = opt;
-        closeMenu();
-      });
-      menu.appendChild(item);
-    }
-
-    if (query && !options.some((o) => o.toLowerCase() === query)) {
-      const create = document.createElement("div");
-      create.className = "combobox-item create";
-      create.textContent = `+ Add "${input.value.trim()}"`;
-      create.addEventListener("mousedown", (e) => {
-        e.preventDefault();
-        closeMenu();
-      });
-      menu.appendChild(create);
-    }
-
-    menu.hidden = menu.children.length === 0;
-  }
-
-  input.addEventListener("focus", render);
-  input.addEventListener("input", render);
-  input.addEventListener("blur", () => setTimeout(closeMenu, 100));
+  if (options.includes(previousValue)) select.value = previousValue;
 }
 
-setupCombobox(categoryInput, categoryMenu, () => categoryNames);
-setupCombobox(projectInput, projectMenu, () => projectNames);
+function setType(type: "reference" | "shortcut") {
+  currentType = type;
+  typeReferenceBtn.classList.toggle("active", type === "reference");
+  typeShortcutBtn.classList.toggle("active", type === "shortcut");
+}
+typeReferenceBtn.addEventListener("click", () => setType("reference"));
+typeShortcutBtn.addEventListener("click", () => setType("shortcut"));
 
 function autoResizeTextarea(el: HTMLTextAreaElement) {
   el.style.height = "auto";
@@ -176,7 +155,9 @@ function setStatus(text: string, kind: "info" | "error" | "success" = "info") {
 
 function setBusy(busy: boolean) {
   for (const field of allFields) field.disabled = busy;
-  autoTagBtn.disabled = busy;
+  autoFillBtn.disabled = busy;
+  typeReferenceBtn.disabled = busy;
+  typeShortcutBtn.disabled = busy;
   saveBtn.disabled = busy;
 }
 
@@ -395,8 +376,14 @@ async function init() {
 
   setBusy(false);
 
-  if (categoriesResult?.ok) categoryNames = categoriesResult.data;
-  if (projectsResult?.ok) projectNames = projectsResult.data;
+  if (categoriesResult?.ok) {
+    categoryNames = categoriesResult.data;
+    populateSelect(categoryInput, categoryNames);
+  }
+  if (projectsResult?.ok) {
+    projectNames = projectsResult.data;
+    populateSelect(projectInput, projectNames);
+  }
 
   if (!pageResult?.ok) {
     setStatus(pageResult?.error ?? "Couldn't read the current page.", "error");
@@ -410,19 +397,19 @@ async function init() {
   setStatus("");
 }
 
-autoTagBtn.addEventListener("click", async () => {
+autoFillBtn.addEventListener("click", async () => {
   setBusy(true);
-  setStatus("Generating tags…");
+  setStatus("Auto-filling…");
 
   const result = (await browser.runtime.sendMessage({
-    type: "PREVIEW_TAGS",
+    type: "AUTO_FILL",
     payload: { url: urlInput.value, title: titleInput.value, content: contentInput.value },
-  })) as Result<{ tags: string[]; summary: string }> | undefined;
+  })) as Result<{ tags: string[]; summary: string; category: string | null; isShortcut: boolean }> | undefined;
 
   setBusy(false);
 
   if (!result?.ok) {
-    setStatus(result?.error ?? "Couldn't generate tags.", "error");
+    setStatus(result?.error ?? "Couldn't auto-fill.", "error");
     return;
   }
 
@@ -430,7 +417,11 @@ autoTagBtn.addEventListener("click", async () => {
   renderTags();
   summaryInput.value = result.data.summary;
   autoResizeTextarea(summaryInput);
-  setStatus("Tags generated.", "success");
+  if (result.data.category && categoryNames.includes(result.data.category)) {
+    categoryInput.value = result.data.category;
+  }
+  setType(result.data.isShortcut ? "shortcut" : "reference");
+  setStatus("Filled in — review before saving.", "success");
 });
 
 let pendingConflictBookmarkId: number | null = null;
@@ -575,6 +566,7 @@ saveBtn.addEventListener("click", async () => {
       category: categoryInput.value.trim(),
       project: projectInput.value.trim(),
       summary: summaryInput.value.trim(),
+      type: currentType,
     },
   })) as SaveOutcome | undefined;
 

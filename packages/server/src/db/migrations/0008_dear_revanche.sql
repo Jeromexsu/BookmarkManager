@@ -1,0 +1,1 @@
+ALTER TABLE "category_suggestion_jobs" ADD COLUMN "type" text DEFAULT 'reference' NOT NULL;

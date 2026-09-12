@@ -2,11 +2,13 @@ import {
   type Bookmark,
   type UpdateBookmarkRequest,
   type SuggestCategoriesScope,
+  type BookmarkType,
   type RenameCategoryResponse,
   type RenameProjectResponse,
   type CategorySuggestionJob,
   type DetectShortcutsJob,
   type CategoryInfo,
+  type CategoryPlanJob,
   listBookmarksResponseSchema,
   bookmarkSchema,
   nameListResponseSchema,
@@ -20,6 +22,8 @@ import {
   renameProjectResponseSchema,
   listCategoriesFullResponseSchema,
   categoryInfoSchema,
+  startCategoryPlanResponseSchema,
+  categoryPlanJobSchema,
 } from "@bookmark-manager/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -78,11 +82,11 @@ async function confirmShortcuts(ids: number[]): Promise<void> {
   if (!res.ok) throw new Error(`Failed to confirm shortcuts: ${res.status}`);
 }
 
-async function startSuggestCategories(scope: SuggestCategoriesScope): Promise<number> {
+async function startSuggestCategories(args: { scope: SuggestCategoriesScope; type: BookmarkType }): Promise<number> {
   const res = await fetch("/api/bookmarks/suggest-categories", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ scope }),
+    body: JSON.stringify(args),
   });
   if (!res.ok) throw new Error(`Failed to start category suggestion: ${res.status}`);
   return startSuggestCategoriesResponseSchema.parse(await res.json()).jobId;
@@ -156,6 +160,18 @@ async function setCategoryDescription(name: string, description: string): Promis
   });
   if (!res.ok) throw new Error(`Failed to update category description: ${res.status}`);
   return categoryInfoSchema.parse(await res.json());
+}
+
+async function startCategoryPlan(): Promise<number> {
+  const res = await fetch("/api/categories/plan", { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to start category plan: ${res.status}`);
+  return startCategoryPlanResponseSchema.parse(await res.json()).jobId;
+}
+
+async function fetchCategoryPlanJob(jobId: number): Promise<CategoryPlanJob> {
+  const res = await fetch(`/api/categories/plan/${jobId}`);
+  if (!res.ok) throw new Error(`Failed to load category plan job: ${res.status}`);
+  return categoryPlanJobSchema.parse(await res.json());
 }
 
 async function createProject(name: string): Promise<void> {
@@ -282,6 +298,7 @@ export function useRenameCategory() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: bookmarksKey });
       queryClient.invalidateQueries({ queryKey: ["categories"] });
+      queryClient.invalidateQueries({ queryKey: ["categoriesFull"] });
     },
   });
 }
@@ -293,6 +310,7 @@ export function useDeleteCategory() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: bookmarksKey });
       queryClient.invalidateQueries({ queryKey: ["categories"] });
+      queryClient.invalidateQueries({ queryKey: ["categoriesFull"] });
     },
   });
 }
@@ -317,6 +335,19 @@ export function useSetCategoryDescription() {
   return useMutation({
     mutationFn: ({ name, description }: { name: string; description: string }) => setCategoryDescription(name, description),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["categoriesFull"] }),
+  });
+}
+
+export function useStartCategoryPlan() {
+  return useMutation({ mutationFn: startCategoryPlan });
+}
+
+export function useCategoryPlanJob(jobId: number | null) {
+  return useQuery({
+    queryKey: ["categoryPlanJob", jobId],
+    queryFn: () => fetchCategoryPlanJob(jobId!),
+    enabled: jobId !== null,
+    refetchInterval: (query) => (query.state.data?.status === "running" ? 2000 : false),
   });
 }
 

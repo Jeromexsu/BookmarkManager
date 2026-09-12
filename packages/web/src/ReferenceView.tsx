@@ -3,7 +3,6 @@ import type { Bookmark } from "@bookmark-manager/shared";
 import { GroupedCardView } from "./GroupedCardView";
 import { BookmarkList } from "./BookmarkList";
 import { CategorySuggestions } from "./CategorySuggestions";
-import { NewCategoryForm } from "./NewCategoryForm";
 import { useCategoriesFull } from "./api";
 
 interface ReferenceViewProps {
@@ -21,14 +20,14 @@ export function ReferenceView({ bookmarks, categories }: ReferenceViewProps) {
     [categoriesFull]
   );
 
-  // Used for the "Suggest categories" review panel's title lookup — suggestions come back as
-  // bare ids scoped server-side, not tied to anything shown in this view directly.
+  // Used for the Auto-categorize review panel's title lookup — assignments come back as bare
+  // ids scoped server-side, not tied to anything shown in this view directly.
   const bookmarkTitleById = useMemo(() => new Map(bookmarks.map((b) => [b.id, b.title])), [bookmarks]);
 
   return (
     <div className="flex-1 min-w-0 p-4 overflow-y-auto">
-      <div className="flex items-center justify-between mb-3">
-        <nav className="flex gap-1 bg-neutral-100 dark:bg-neutral-800 rounded-lg p-1 w-fit">
+      <div className="flex items-center gap-3 flex-wrap mb-3">
+        <nav className="flex gap-1 bg-neutral-100 dark:bg-neutral-800 rounded-lg p-1 w-fit shrink-0">
           {(["category", "all"] as const).map((v) => (
             <button
               key={v}
@@ -43,10 +42,9 @@ export function ReferenceView({ bookmarks, categories }: ReferenceViewProps) {
             </button>
           ))}
         </nav>
-        {subView === "category" && <NewCategoryForm />}
-      </div>
 
-      {subView === "category" && <CategorySuggestions bookmarkTitleById={bookmarkTitleById} />}
+        {subView === "category" && <CategorySuggestions type="reference" bookmarkTitleById={bookmarkTitleById} />}
+      </div>
 
       {subView === "all" ? (
         <BookmarkList bookmarks={bookmarks} />

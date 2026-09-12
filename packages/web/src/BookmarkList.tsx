@@ -11,7 +11,7 @@ export function BookmarkList({ bookmarks }: BookmarkListProps) {
   }
 
   return (
-    <ul className="space-y-2">
+    <ul className="space-y-3">
       {bookmarks.map((b) => (
         <BookmarkRow key={b.id} bookmark={b} />
       ))}

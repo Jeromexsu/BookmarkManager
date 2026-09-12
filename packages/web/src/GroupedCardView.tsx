@@ -1,7 +1,6 @@
 import { useState, type ReactNode } from "react";
 import type { Bookmark } from "@bookmark-manager/shared";
 import { BookmarkRow } from "./BookmarkRow";
-import { useDeleteCategory, useRenameCategory, useSetCategoryDescription } from "./api";
 
 interface GroupedCardViewProps {
   bookmarks: Bookmark[];
@@ -21,7 +20,7 @@ interface GroupedCardViewProps {
 
 function defaultRenderItems(items: Bookmark[], moveToCategories: string[]): ReactNode {
   return (
-    <ul className="space-y-2 pl-6 pb-3">
+    <ul className="space-y-3 pl-6 pt-2 pb-3">
       {items.map((b) => (
         <BookmarkRow key={b.id} bookmark={b} moveToCategories={moveToCategories} />
       ))}
@@ -48,13 +47,6 @@ export function GroupedCardView({
   renderItems = defaultRenderItems,
 }: GroupedCardViewProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [renamingKey, setRenamingKey] = useState<string | null>(null);
-  const [renameDraft, setRenameDraft] = useState("");
-  const [editingDescKey, setEditingDescKey] = useState<string | null>(null);
-  const [descDraft, setDescDraft] = useState("");
-  const renameMutation = useRenameCategory();
-  const deleteMutation = useDeleteCategory();
-  const descriptionMutation = useSetCategoryDescription();
 
   const groups = buildGroups(bookmarks);
   const sortedKeys = [...groups.keys()].sort((a, b) => {
@@ -72,38 +64,6 @@ export function GroupedCardView({
     });
   }
 
-  function startRename(key: string) {
-    setRenamingKey(key);
-    setRenameDraft(key);
-  }
-
-  function commitRename(key: string) {
-    const to = renameDraft.trim();
-    setRenamingKey(null);
-    if (to && to !== key) {
-      renameMutation.mutate({ from: key, to });
-    }
-  }
-
-  function handleDeleteCategory(key: string, count: number) {
-    if (confirm(`Remove category "${key}"? Its ${count} bookmark${count === 1 ? "" : "s"} will become Uncategorized.`)) {
-      deleteMutation.mutate(key);
-    }
-  }
-
-  function startEditDesc(key: string) {
-    setEditingDescKey(key);
-    setDescDraft(categoryDescriptions?.get(key) ?? "");
-  }
-
-  function commitDesc(key: string) {
-    const value = descDraft.trim();
-    setEditingDescKey(null);
-    if (value !== (categoryDescriptions?.get(key) ?? "")) {
-      descriptionMutation.mutate({ name: key, description: value });
-    }
-  }
-
   if (sortedKeys.length === 0) {
     return <p className="text-sm text-neutral-400 text-center py-12">No bookmarks yet.</p>;
   }
@@ -113,80 +73,27 @@ export function GroupedCardView({
       {sortedKeys.map((key) => {
         const items = groups.get(key)!;
         const isOpen = autoExpand || expanded.has(key);
-        const isManageable = key !== "Uncategorized";
-        const isRenaming = renamingKey === key;
         const moveToCategories = categories?.filter((c) => c !== key) ?? [];
 
         return (
           <div key={key}>
-            <div className="w-full flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-900">
-              <button
-                onClick={() => toggle(key)}
-                className="flex items-center gap-2 flex-1 min-w-0 text-left"
+            <button
+              onClick={() => toggle(key)}
+              className="w-full flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-900 text-left"
+            >
+              <span
+                className={`shrink-0 text-xs text-neutral-400 transition-transform inline-block ${isOpen ? "rotate-90" : ""}`}
               >
-                <span className={`text-xs text-neutral-400 transition-transform inline-block ${isOpen ? "rotate-90" : ""}`}>
-                  ▸
-                </span>
-                {isRenaming ? (
-                  <input
-                    autoFocus
-                    value={renameDraft}
-                    onChange={(e) => setRenameDraft(e.target.value)}
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") commitRename(key);
-                      if (e.key === "Escape") setRenamingKey(null);
-                    }}
-                    onBlur={() => commitRename(key)}
-                    className="font-semibold text-sm px-1.5 py-0.5 rounded border border-blue-400 outline-none bg-white dark:bg-neutral-950"
-                  />
-                ) : (
-                  <span className="font-semibold text-sm truncate">{key}</span>
-                )}
-                <span className="text-xs text-neutral-400">{items.length}</span>
-              </button>
-
-              {isManageable && !isRenaming && (
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    onClick={() => startEditDesc(key)}
-                    className="text-xs px-2 py-1 rounded-md text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                  >
-                    Description
-                  </button>
-                  <button
-                    onClick={() => startRename(key)}
-                    className="text-xs px-2 py-1 rounded-md text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                  >
-                    Rename
-                  </button>
-                  <button
-                    onClick={() => handleDeleteCategory(key, items.length)}
-                    className="text-xs px-2 py-1 rounded-md text-neutral-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
-                  >
-                    Remove
-                  </button>
-                </div>
+                ▸
+              </span>
+              <span className="shrink-0 font-semibold text-sm">{key}</span>
+              {categoryDescriptions?.get(key) && (
+                <span className="min-w-0 flex-1 truncate text-xs text-neutral-400">{categoryDescriptions.get(key)}</span>
               )}
-            </div>
-
-            {isManageable && editingDescKey === key && (
-              <input
-                autoFocus
-                value={descDraft}
-                onChange={(e) => setDescDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") commitDesc(key);
-                  if (e.key === "Escape") setEditingDescKey(null);
-                }}
-                onBlur={() => commitDesc(key)}
-                placeholder="What's this category for?"
-                className="w-full text-xs px-2 py-1 mb-1 rounded-md border border-blue-400 outline-none bg-white dark:bg-neutral-950 text-neutral-600 dark:text-neutral-400"
-              />
-            )}
-            {isManageable && editingDescKey !== key && categoryDescriptions?.get(key) && (
-              <p className="text-xs text-neutral-400 px-2 mb-1 truncate">{categoryDescriptions.get(key)}</p>
-            )}
+              <span className="shrink-0 px-1.5 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-xs font-medium text-neutral-500 dark:text-neutral-400">
+                {items.length}
+              </span>
+            </button>
 
             {isOpen && renderItems(items, moveToCategories)}
           </div>

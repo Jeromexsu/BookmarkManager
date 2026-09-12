@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { Bookmark } from "@bookmark-manager/shared";
 import { BookmarkRow } from "./BookmarkRow";
+import { PendingRow } from "./PendingRow";
 import { ShortcutTile } from "./ShortcutTile";
 
 interface SearchResultsViewProps {
@@ -48,7 +49,7 @@ export function SearchResultsView({ bookmarks, query }: SearchResultsViewProps) 
                 </div>
               )}
               {references.length > 0 && (
-                <ul className="space-y-2">
+                <ul className="space-y-3">
                   {references.map((b) => (
                     <BookmarkRow key={b.id} bookmark={b} />
                   ))}
@@ -59,9 +60,9 @@ export function SearchResultsView({ bookmarks, query }: SearchResultsViewProps) 
           {pending.length > 0 && (
             <div>
               <p className="text-xs font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Pending</p>
-              <ul className="space-y-2">
+              <ul className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                 {pending.map((b) => (
-                  <BookmarkRow key={b.id} bookmark={b} showResolveActions />
+                  <PendingRow key={b.id} bookmark={b} />
                 ))}
               </ul>
             </div>
