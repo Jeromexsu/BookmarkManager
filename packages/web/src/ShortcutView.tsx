@@ -232,7 +232,9 @@ export function ShortcutView({ shortcuts, categories }: ShortcutViewProps) {
       ) : (
         <GroupedCardView
           bookmarks={filtered}
-          autoExpand={query.trim() !== ""}
+          // Shortcut tiles are compact and meant for scanning at a glance — unlike References'
+          // (often long) lists, there's no real cost to always showing every group open.
+          autoExpand
           categories={categories}
           renderItems={(items, moveToCategories) => (
             <div className="flex flex-wrap gap-3 pl-6 pb-3">

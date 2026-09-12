@@ -77,10 +77,10 @@ export function ShortcutTile({ bookmark, moveToCategories }: ShortcutTileProps) 
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            handleRevert();
+            handleDelete();
           }}
           className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 text-neutral-400 hover:text-red-600 text-xs"
-          title="Not a shortcut"
+          title="Delete"
         >
           ×
         </button>
@@ -175,8 +175,8 @@ export function ShortcutTile({ bookmark, moveToCategories }: ShortcutTileProps) 
           </div>
 
           <div className="flex items-center justify-end pt-1.5 border-t border-neutral-100 dark:border-neutral-900">
-            <button onClick={handleDelete} className="text-xs text-neutral-400 hover:text-red-600">
-              Delete
+            <button onClick={handleRevert} className="text-xs text-violet-600 dark:text-violet-400 hover:text-violet-700">
+              Not a shortcut
             </button>
           </div>
         </div>
