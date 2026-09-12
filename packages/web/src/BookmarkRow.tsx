@@ -179,9 +179,12 @@ export function BookmarkRow({ bookmark, showResolveActions = false, moveToCatego
             onChange={(e) => setCategoryDraft(e.target.value)}
             onBlur={commitCategory}
             placeholder="Category"
-            className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300 outline-none w-24 placeholder:text-amber-400"
+            className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300 outline-none w-36 placeholder:text-amber-400"
           />
-          {moveToCategories && moveToCategories.length > 0 && (
+        </div>
+
+        {moveToCategories && moveToCategories.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
             <select
               onChange={handleMoveTo}
               defaultValue=""
@@ -197,8 +200,8 @@ export function BookmarkRow({ bookmark, showResolveActions = false, moveToCatego
                 </option>
               ))}
             </select>
-          )}
-        </div>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
           <input
