@@ -95,7 +95,7 @@ export function App() {
         <>
           {view === "references" && <ReferenceView bookmarks={references} categories={categories} />}
           {view === "shortcuts" && <ShortcutView shortcuts={shortcuts} categories={categories} />}
-          {view === "projects" && <ProjectsView bookmarks={resolved} />}
+          {view === "projects" && <ProjectsView bookmarks={resolved} projects={projects} />}
           {view === "pending" && <PendingView pending={pending} />}
         </>
       )}

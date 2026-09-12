@@ -11,9 +11,18 @@ interface BookmarkRowProps {
   // Shown only in the Category view — every OTHER existing category, for a one-click move
   // (distinct from the free-text category field, which is for typing/creating one).
   moveToCategories?: string[];
+  // Shown only inside a project's bookmark list — replaces "Delete" with "Remove," which
+  // unlinks the bookmark from the project instead of deleting it. Removing a bookmark from a
+  // project view is a soft operation; deleting the bookmark itself always needs the real thing.
+  onRemoveFromProject?: () => void;
 }
 
-export function BookmarkRow({ bookmark, showResolveActions = false, moveToCategories }: BookmarkRowProps) {
+export function BookmarkRow({
+  bookmark,
+  showResolveActions = false,
+  moveToCategories,
+  onRemoveFromProject,
+}: BookmarkRowProps) {
   const updateMutation = useUpdateBookmark();
   const deleteMutation = useDeleteBookmark();
   const suggestTitleMutation = useSuggestTitle();
@@ -159,8 +168,11 @@ export function BookmarkRow({ bookmark, showResolveActions = false, moveToCatego
             >
               📦 It's a shortcut
             </button>
-            <button onClick={handleDelete} className="text-neutral-400 hover:text-red-600 text-xs">
-              Delete
+            <button
+              onClick={onRemoveFromProject ?? handleDelete}
+              className="text-neutral-400 hover:text-red-600 text-xs"
+            >
+              {onRemoveFromProject ? "Remove" : "Delete"}
             </button>
           </div>
         </div>

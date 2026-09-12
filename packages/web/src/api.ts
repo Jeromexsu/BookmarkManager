@@ -3,6 +3,7 @@ import {
   type UpdateBookmarkRequest,
   type SuggestCategoriesScope,
   type RenameCategoryResponse,
+  type RenameProjectResponse,
   type CategorySuggestionJob,
   type DetectShortcutsJob,
   listBookmarksResponseSchema,
@@ -15,6 +16,7 @@ import {
   startDetectShortcutsResponseSchema,
   detectShortcutsJobSchema,
   clearShortcutCacheResponseSchema,
+  renameProjectResponseSchema,
 } from "@bookmark-manager/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -125,6 +127,34 @@ async function deleteCategory(name: string): Promise<void> {
     body: JSON.stringify({ name }),
   });
   if (!res.ok) throw new Error(`Failed to delete category: ${res.status}`);
+}
+
+async function createProject(name: string): Promise<void> {
+  const res = await fetch("/api/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`Failed to create project: ${res.status}`);
+}
+
+async function renameProject(from: string, to: string): Promise<RenameProjectResponse> {
+  const res = await fetch("/api/projects", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ from, to }),
+  });
+  if (!res.ok) throw new Error(`Failed to rename project: ${res.status}`);
+  return renameProjectResponseSchema.parse(await res.json());
+}
+
+async function deleteProject(name: string): Promise<void> {
+  const res = await fetch("/api/projects", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`Failed to delete project: ${res.status}`);
 }
 
 const bookmarksKey = ["bookmarks"] as const;
@@ -241,5 +271,35 @@ export function useDeleteCategory() {
 export function useSuggestTitle() {
   return useMutation({
     mutationFn: ({ title, content }: { title: string; content: string }) => suggestTitle(title, content),
+  });
+}
+
+export function useCreateProject() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: createProject,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
+  });
+}
+
+export function useRenameProject() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ from, to }: { from: string; to: string }) => renameProject(from, to),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: bookmarksKey });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+}
+
+export function useDeleteProject() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: deleteProject,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: bookmarksKey });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+    },
   });
 }

@@ -262,3 +262,28 @@ export const deleteCategoryRequestSchema = z.object({
   name: z.string().min(1),
 });
 export type DeleteCategoryRequest = z.infer<typeof deleteCategoryRequestSchema>;
+
+// Same addressed-by-name convention as categories above, plus an explicit create — a project
+// can exist with zero bookmarks yet (you make it, then add things to it), unlike a category
+// which only ever comes into being by being set on a bookmark.
+export const createProjectRequestSchema = z.object({
+  name: z.string().min(1),
+});
+export type CreateProjectRequest = z.infer<typeof createProjectRequestSchema>;
+
+export const renameProjectRequestSchema = z.object({
+  from: z.string().min(1),
+  to: z.string().min(1),
+});
+export type RenameProjectRequest = z.infer<typeof renameProjectRequestSchema>;
+
+export const renameProjectResponseSchema = z.object({
+  name: z.string(),
+  merged: z.boolean(),
+});
+export type RenameProjectResponse = z.infer<typeof renameProjectResponseSchema>;
+
+export const deleteProjectRequestSchema = z.object({
+  name: z.string().min(1),
+});
+export type DeleteProjectRequest = z.infer<typeof deleteProjectRequestSchema>;

@@ -7,9 +7,12 @@ interface ShortcutTileProps {
   bookmark: Bookmark;
   // Same convention as BookmarkRow — every OTHER existing category, for the "Move to" dropdown.
   moveToCategories?: string[];
+  // Same convention as BookmarkRow — shown only inside a project's bookmark list, replaces the
+  // tile's delete action with unlinking from the project instead.
+  onRemoveFromProject?: () => void;
 }
 
-export function ShortcutTile({ bookmark, moveToCategories }: ShortcutTileProps) {
+export function ShortcutTile({ bookmark, moveToCategories, onRemoveFromProject }: ShortcutTileProps) {
   const updateMutation = useUpdateBookmark();
   const deleteMutation = useDeleteBookmark();
 
@@ -77,10 +80,14 @@ export function ShortcutTile({ bookmark, moveToCategories }: ShortcutTileProps) 
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            handleDelete();
+            if (onRemoveFromProject) {
+              onRemoveFromProject();
+            } else {
+              handleDelete();
+            }
           }}
           className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 text-neutral-400 hover:text-red-600 text-xs"
-          title="Delete"
+          title={onRemoveFromProject ? "Remove from project" : "Delete"}
         >
           ×
         </button>
