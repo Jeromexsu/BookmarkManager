@@ -1,20 +1,11 @@
-import { useMemo } from "react";
 import type { Bookmark } from "@bookmark-manager/shared";
 import { BookmarkRow } from "./BookmarkRow";
 
 interface PendingViewProps {
   pending: Bookmark[];
-  // Driven by the top-level omnisearch bar (App.tsx) now, not a search box owned by this view.
-  query: string;
 }
 
-export function PendingView({ pending, query }: PendingViewProps) {
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return pending;
-    return pending.filter((b) => [b.title, b.url].some((field) => field.toLowerCase().includes(q)));
-  }, [pending, query]);
-
+export function PendingView({ pending }: PendingViewProps) {
   return (
     <div className="flex-1 min-w-0 p-4 overflow-y-auto">
       <p className="text-sm text-neutral-500 mb-3">
@@ -23,13 +14,11 @@ export function PendingView({ pending, query }: PendingViewProps) {
         entrance page, or mark it resolved as-is if it doesn't need any of that.
       </p>
 
-      {filtered.length === 0 ? (
-        <p className="text-sm text-neutral-400 text-center py-12">
-          {pending.length === 0 ? "Nothing pending — you're all caught up." : "No pending bookmarks match."}
-        </p>
+      {pending.length === 0 ? (
+        <p className="text-sm text-neutral-400 text-center py-12">Nothing pending — you're all caught up.</p>
       ) : (
         <ul className="space-y-2">
-          {filtered.map((b) => (
+          {pending.map((b) => (
             <BookmarkRow key={b.id} bookmark={b} showResolveActions />
           ))}
         </ul>

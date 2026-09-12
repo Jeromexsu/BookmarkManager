@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { Bookmark } from "@bookmark-manager/shared";
 import { useClearShortcutCache, useConfirmShortcuts, useDetectShortcutsJob, useStartDetectShortcuts } from "./api";
 import { GroupedCardView } from "./GroupedCardView";
@@ -19,11 +19,9 @@ type SubView = "category" | "all";
 interface ShortcutViewProps {
   shortcuts: Bookmark[];
   categories: string[];
-  // Driven by the top-level omnisearch bar (App.tsx) now, not a search box owned by this view.
-  query: string;
 }
 
-export function ShortcutView({ shortcuts, categories, query }: ShortcutViewProps) {
+export function ShortcutView({ shortcuts, categories }: ShortcutViewProps) {
   const startMutation = useStartDetectShortcuts();
   const confirmMutation = useConfirmShortcuts();
   const clearCacheMutation = useClearShortcutCache();
@@ -35,16 +33,6 @@ export function ShortcutView({ shortcuts, categories, query }: ShortcutViewProps
 
   const jobQuery = useDetectShortcutsJob(jobId);
   const isRunning = jobId !== null && jobQuery.data?.status !== "completed" && jobQuery.data?.status !== "failed";
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return shortcuts;
-    return shortcuts.filter((b) =>
-      [b.title, b.url, b.category, b.project, ...b.tags]
-        .filter((field): field is string => Boolean(field))
-        .some((field) => field.toLowerCase().includes(q))
-    );
-  }, [shortcuts, query]);
 
   // Anchored to the job's real createdAt, not this component's mount time, so reopening the
   // page after a while shows true elapsed time rather than restarting from zero.
@@ -99,7 +87,6 @@ export function ShortcutView({ shortcuts, categories, query }: ShortcutViewProps
   }
 
   const candidates = jobQuery.data?.status === "completed" ? jobQuery.data.candidates : null;
-  const isSearching = query.trim() !== "";
 
   return (
     <div className="flex-1 min-w-0 p-4 overflow-y-auto">
@@ -219,18 +206,15 @@ export function ShortcutView({ shortcuts, categories, query }: ShortcutViewProps
         <p className="text-sm text-neutral-400 text-center py-12">
           No shortcuts yet — click "Detect shortcuts" to find candidates among your bookmarks.
         </p>
-      ) : /* Search results are a flat, unified grid — the category tree adds nothing once every
-             tile already shows its own category dot, so bypass it while a query is active
-             regardless of which sub-tab is selected. */
-      isSearching || subView === "all" ? (
+      ) : subView === "all" ? (
         <div className="flex flex-wrap gap-3">
-          {filtered.map((s) => (
+          {shortcuts.map((s) => (
             <ShortcutTile key={s.id} bookmark={s} />
           ))}
         </div>
       ) : (
         <GroupedCardView
-          bookmarks={filtered}
+          bookmarks={shortcuts}
           // Shortcut tiles are compact and meant for scanning at a glance — unlike References'
           // (often long) lists, there's no real cost to always showing every group open.
           autoExpand

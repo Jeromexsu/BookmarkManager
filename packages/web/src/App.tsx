@@ -4,6 +4,7 @@ import { ReferenceView } from "./ReferenceView";
 import { ShortcutView } from "./ShortcutView";
 import { ProjectsView } from "./ProjectsView";
 import { PendingView } from "./PendingView";
+import { SearchResultsView } from "./SearchResultsView";
 
 type View = "references" | "shortcuts" | "projects" | "pending";
 
@@ -85,10 +86,19 @@ export function App() {
         ))}
       </datalist>
 
-      {view === "references" && <ReferenceView bookmarks={references} categories={categories} query={query} />}
-      {view === "shortcuts" && <ShortcutView shortcuts={shortcuts} categories={categories} query={query} />}
-      {view === "projects" && <ProjectsView bookmarks={resolved} query={query} />}
-      {view === "pending" && <PendingView pending={pending} query={query} />}
+      {/* Omnisearch: a match anywhere takes over the content area regardless of which tab is
+          selected — that's the difference between "one search box" and an actual omnisearch.
+          Clearing the query drops back to whichever tab was last selected. */}
+      {query.trim() !== "" ? (
+        <SearchResultsView bookmarks={bookmarks} query={query} />
+      ) : (
+        <>
+          {view === "references" && <ReferenceView bookmarks={references} categories={categories} />}
+          {view === "shortcuts" && <ShortcutView shortcuts={shortcuts} categories={categories} />}
+          {view === "projects" && <ProjectsView bookmarks={resolved} />}
+          {view === "pending" && <PendingView pending={pending} />}
+        </>
+      )}
     </div>
   );
 }

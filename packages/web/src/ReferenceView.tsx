@@ -7,29 +7,16 @@ import { CategorySuggestions } from "./CategorySuggestions";
 interface ReferenceViewProps {
   bookmarks: Bookmark[];
   categories: string[];
-  // Driven by the top-level omnisearch bar (App.tsx) now, not a search box owned by this view.
-  query: string;
 }
 
 type SubView = "category" | "all";
 
-export function ReferenceView({ bookmarks, categories, query }: ReferenceViewProps) {
+export function ReferenceView({ bookmarks, categories }: ReferenceViewProps) {
   const [subView, setSubView] = useState<SubView>("category");
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return bookmarks;
-    return bookmarks.filter((b) =>
-      [b.title, b.url, b.summary, b.category, b.project, ...b.tags]
-        .filter((field): field is string => Boolean(field))
-        .some((field) => field.toLowerCase().includes(q))
-    );
-  }, [bookmarks, query]);
-
-  // Suggestions come back scoped to ALL uncategorized bookmarks server-side, not just the
-  // current search results, so the title lookup needs the full unfiltered set too.
+  // Used for the "Suggest categories" review panel's title lookup — suggestions come back as
+  // bare ids scoped server-side, not tied to anything shown in this view directly.
   const bookmarkTitleById = useMemo(() => new Map(bookmarks.map((b) => [b.id, b.title])), [bookmarks]);
-  const isSearching = query.trim() !== "";
 
   return (
     <div className="flex-1 min-w-0 p-4 overflow-y-auto">
@@ -51,13 +38,10 @@ export function ReferenceView({ bookmarks, categories, query }: ReferenceViewPro
 
       {subView === "category" && <CategorySuggestions bookmarkTitleById={bookmarkTitleById} />}
 
-      {/* Search results are a flat, unified list — the category tree adds nothing once every
-          card already shows its own category pill, so bypass it while a query is active
-          regardless of which sub-tab is selected. */}
-      {isSearching || subView === "all" ? (
-        <BookmarkList bookmarks={filtered} />
+      {subView === "all" ? (
+        <BookmarkList bookmarks={bookmarks} />
       ) : (
-        <GroupedCardView bookmarks={filtered} categories={categories} />
+        <GroupedCardView bookmarks={bookmarks} categories={categories} />
       )}
     </div>
   );
