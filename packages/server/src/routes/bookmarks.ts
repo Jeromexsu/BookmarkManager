@@ -14,9 +14,18 @@ import {
   type CategorySuggestion,
   type CategorySuggestionJob,
   type SuggestCategoriesScope,
+  type DetectShortcutsJob,
 } from "@bookmark-manager/shared";
 import { db } from "../db/client.js";
-import { bookmarks, tags, bookmarkTags, categories, projects, categorySuggestionJobs } from "../db/schema.js";
+import {
+  bookmarks,
+  tags,
+  bookmarkTags,
+  categories,
+  projects,
+  categorySuggestionJobs,
+  detectShortcutJobs,
+} from "../db/schema.js";
 import { generateTags } from "../ai/tagging.js";
 import { classifyShortcut } from "../ai/classify.js";
 import { suggestTitle } from "../ai/title.js";
@@ -224,6 +233,68 @@ async function runCategorySuggestionJob(jobId: number, scope: SuggestCategoriesS
       .update(categorySuggestionJobs)
       .set({ status: "failed", error: err instanceof Error ? err.message : "Unknown error" })
       .where(eq(categorySuggestionJobs.id, jobId));
+  }
+}
+
+const DETECT_SHORTCUTS_CONCURRENCY = 4;
+
+// Same job-persistence reasoning as runCategorySuggestionJob above. Only scans bookmarks that
+// haven't been confidently ruled out before (shortcutChecked = false) — the set that's actually
+// expensive to (re-)classify shrinks over time instead of re-doing the same work every run.
+async function runDetectShortcutsJob(jobId: number) {
+  try {
+    const rows = await db
+      .select()
+      .from(bookmarks)
+      .where(and(eq(bookmarks.type, "reference"), eq(bookmarks.shortcutChecked, false)));
+
+    const candidates: ShortcutCandidate[] = [];
+    const queue = rows.filter((row) => isRootUrl(row.url));
+
+    async function worker() {
+      while (queue.length > 0) {
+        const row = queue.shift()!;
+
+        if (!row.content) {
+          candidates.push({
+            id: row.id,
+            url: row.url,
+            title: row.title,
+            favicon: row.favicon,
+            reason: "Bare domain root URL (no content scraped)",
+          });
+          continue;
+        }
+
+        try {
+          const result = await classifyShortcut(row.title, row.content);
+          if (result.isShortcut) {
+            candidates.push({ id: row.id, url: row.url, title: row.title, favicon: row.favicon, reason: result.reason });
+          } else {
+            // A confident "no" — cache it so future runs don't pay for this bookmark again.
+            // An unconfirmed "yes" stays uncached: it keeps surfacing as a candidate until the
+            // user actually resolves it (confirms it, or the row changes some other way).
+            await db.update(bookmarks).set({ shortcutChecked: true }).where(eq(bookmarks.id, row.id));
+          }
+        } catch {
+          candidates.push({
+            id: row.id,
+            url: row.url,
+            title: row.title,
+            favicon: row.favicon,
+            reason: "Bare domain root URL (classification failed, heuristic only)",
+          });
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: DETECT_SHORTCUTS_CONCURRENCY }, worker));
+
+    await db.update(detectShortcutJobs).set({ status: "completed", candidates }).where(eq(detectShortcutJobs.id, jobId));
+  } catch (err) {
+    await db
+      .update(detectShortcutJobs)
+      .set({ status: "failed", error: err instanceof Error ? err.message : "Unknown error" })
+      .where(eq(detectShortcutJobs.id, jobId));
   }
 }
 
@@ -510,45 +581,43 @@ export async function bookmarkRoutes(app: FastifyInstance) {
     return reply.code(204).send();
   });
 
-  // Proposes shortcut candidates for review — never reclassifies anything outright. Cheap: no
-  // network fetching (reuses already-scraped content), and the LLM call only runs for bookmarks
-  // that already pass the bare-root-URL heuristic, not the whole table.
+  // Proposes shortcut candidates for review — never reclassifies anything outright. Runs as a
+  // background job (like /suggest-categories above): responds immediately with a jobId, the
+  // caller polls GET /bookmarks/detect-shortcuts/:id for status/result.
   app.post("/bookmarks/detect-shortcuts", async (request, reply) => {
-    const rows = await db.select().from(bookmarks).where(eq(bookmarks.type, "reference"));
-    const candidates: ShortcutCandidate[] = [];
+    const [job] = await db.insert(detectShortcutJobs).values({ status: "running" }).returning();
 
-    for (const row of rows) {
-      if (!isRootUrl(row.url)) continue;
+    runDetectShortcutsJob(job.id).catch((err) => {
+      app.log.error(err, `Detect-shortcuts job ${job.id} failed`);
+    });
 
-      if (!row.content) {
-        candidates.push({
-          id: row.id,
-          url: row.url,
-          title: row.title,
-          favicon: row.favicon,
-          reason: "Bare domain root URL (no content scraped)",
-        });
-        continue;
-      }
+    return reply.code(201).send({ jobId: job.id });
+  });
 
-      try {
-        const result = await classifyShortcut(row.title, row.content);
-        if (result.isShortcut) {
-          candidates.push({ id: row.id, url: row.url, title: row.title, favicon: row.favicon, reason: result.reason });
-        }
-      } catch (err) {
-        app.log.error(err, `Shortcut classification failed for bookmark ${row.id}`);
-        candidates.push({
-          id: row.id,
-          url: row.url,
-          title: row.title,
-          favicon: row.favicon,
-          reason: "Bare domain root URL (classification failed, heuristic only)",
-        });
-      }
+  app.get("/bookmarks/detect-shortcuts/:id", async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    const [job] = await db.select().from(detectShortcutJobs).where(eq(detectShortcutJobs.id, id));
+    if (!job) {
+      return reply.code(404).send({ error: "Detect-shortcuts job not found" });
     }
+    return {
+      id: job.id,
+      status: job.status as DetectShortcutsJob["status"],
+      candidates: job.candidates ?? null,
+      error: job.error,
+      createdAt: job.createdAt.toISOString(),
+    } satisfies DetectShortcutsJob;
+  });
 
-    return reply.send({ candidates } satisfies { candidates: ShortcutCandidate[] });
+  // Resets the "confidently not a shortcut" cache so the next detect-shortcuts run reconsiders
+  // everything again — for after a prompt/classifier change, or just distrust in a past result.
+  app.post("/bookmarks/clear-shortcut-cache", async (request, reply) => {
+    const result = await db
+      .update(bookmarks)
+      .set({ shortcutChecked: false })
+      .where(eq(bookmarks.shortcutChecked, true))
+      .returning({ id: bookmarks.id });
+    return { cleared: result.length };
   });
 
   app.post("/bookmarks/confirm-shortcuts", async (request, reply) => {

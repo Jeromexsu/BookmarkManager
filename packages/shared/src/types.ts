@@ -166,15 +166,35 @@ export const shortcutCandidateSchema = z.object({
 });
 export type ShortcutCandidate = z.infer<typeof shortcutCandidateSchema>;
 
-export const detectShortcutsResponseSchema = z.object({
-  candidates: z.array(shortcutCandidateSchema),
+// A single detect-shortcuts run classifies every not-yet-checked root-URL reference — same
+// "too slow for one HTTP response" shape as category suggestion, so it's a persisted job too:
+// POST starts it and returns a jobId, GET polls status/result.
+export const startDetectShortcutsResponseSchema = z.object({
+  jobId: z.number(),
 });
-export type DetectShortcutsResponse = z.infer<typeof detectShortcutsResponseSchema>;
+export type StartDetectShortcutsResponse = z.infer<typeof startDetectShortcutsResponseSchema>;
+
+export const detectShortcutsJobStatusSchema = z.enum(["running", "completed", "failed"]);
+export type DetectShortcutsJobStatus = z.infer<typeof detectShortcutsJobStatusSchema>;
+
+export const detectShortcutsJobSchema = z.object({
+  id: z.number(),
+  status: detectShortcutsJobStatusSchema,
+  candidates: z.array(shortcutCandidateSchema).nullable(),
+  error: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type DetectShortcutsJob = z.infer<typeof detectShortcutsJobSchema>;
 
 export const confirmShortcutsRequestSchema = z.object({
   ids: z.array(z.number()).min(1),
 });
 export type ConfirmShortcutsRequest = z.infer<typeof confirmShortcutsRequestSchema>;
+
+export const clearShortcutCacheResponseSchema = z.object({
+  cleared: z.number(),
+});
+export type ClearShortcutCacheResponse = z.infer<typeof clearShortcutCacheResponseSchema>;
 
 // Suggest-then-apply category grouping: scans "reference" bookmarks (either just the
 // uncategorized ones, or every one — the caller's choice, since re-bucketing everything is a

@@ -4,11 +4,12 @@ import {
   text,
   timestamp,
   integer,
+  boolean,
   primaryKey,
   customType,
   jsonb,
 } from "drizzle-orm/pg-core";
-import type { ImportResultItem, CategorySuggestion } from "@bookmark-manager/shared";
+import type { ImportResultItem, CategorySuggestion, ShortcutCandidate } from "@bookmark-manager/shared";
 
 // Dimension is a placeholder until an embedding provider is chosen (see ai/embeddings.ts).
 // pgvector requires a fixed dimension per column, so this will need a migration once decided.
@@ -56,6 +57,11 @@ export const bookmarks = pgTable("bookmarks", {
   // "reference" (has real content worth reading/tagging) vs "shortcut" (a pure entrance/portal
   // page like a homepage — no content, just a launcher). See ai/classify.ts.
   type: text("type").notNull().default("reference"),
+  // Set true only when detect-shortcuts confidently classified this as NOT a shortcut — an
+  // unconfirmed shortcut candidate stays false so it keeps surfacing until the user actually
+  // resolves it (confirms or the row changes). Lets re-running detection skip the (large,
+  // growing) set of bookmarks it already has a confident answer for.
+  shortcutChecked: boolean("shortcut_checked").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -102,6 +108,17 @@ export const categorySuggestionJobs = pgTable("category_suggestion_jobs", {
   status: text("status").notNull().default("running"), // "running" | "completed" | "failed"
   scope: text("scope").notNull(), // "uncategorized" | "all"
   suggestions: jsonb("suggestions").$type<CategorySuggestion[]>(),
+  error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Same shape/reasoning as categorySuggestionJobs above — detect-shortcuts scans every
+// not-yet-checked reference bookmark and classifies each root-URL candidate, which is the same
+// class of "too slow for one HTTP response" problem.
+export const detectShortcutJobs = pgTable("detect_shortcut_jobs", {
+  id: serial("id").primaryKey(),
+  status: text("status").notNull().default("running"), // "running" | "completed" | "failed"
+  candidates: jsonb("candidates").$type<ShortcutCandidate[]>(),
   error: text("error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

@@ -36,6 +36,13 @@
       "when": 1789185303248,
       "tag": "0004_category_suggestion_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789188314753,
+      "tag": "0005_shortcut_detection_cache",
+      "breakpoints": true
     }
   ]
 }

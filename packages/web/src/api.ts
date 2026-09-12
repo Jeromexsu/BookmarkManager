@@ -1,18 +1,20 @@
 import {
   type Bookmark,
   type UpdateBookmarkRequest,
-  type ShortcutCandidate,
   type SuggestCategoriesScope,
   type RenameCategoryResponse,
   type CategorySuggestionJob,
+  type DetectShortcutsJob,
   listBookmarksResponseSchema,
   bookmarkSchema,
   nameListResponseSchema,
-  detectShortcutsResponseSchema,
   startSuggestCategoriesResponseSchema,
   categorySuggestionJobSchema,
   renameCategoryResponseSchema,
   suggestTitleResponseSchema,
+  startDetectShortcutsResponseSchema,
+  detectShortcutsJobSchema,
+  clearShortcutCacheResponseSchema,
 } from "@bookmark-manager/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -44,10 +46,22 @@ async function listNames(path: "categories" | "projects"): Promise<string[]> {
   return nameListResponseSchema.parse(await res.json()).names;
 }
 
-async function detectShortcuts(): Promise<ShortcutCandidate[]> {
+async function startDetectShortcuts(): Promise<number> {
   const res = await fetch("/api/bookmarks/detect-shortcuts", { method: "POST" });
-  if (!res.ok) throw new Error(`Failed to detect shortcuts: ${res.status}`);
-  return detectShortcutsResponseSchema.parse(await res.json()).candidates;
+  if (!res.ok) throw new Error(`Failed to start shortcut detection: ${res.status}`);
+  return startDetectShortcutsResponseSchema.parse(await res.json()).jobId;
+}
+
+async function fetchDetectShortcutsJob(jobId: number): Promise<DetectShortcutsJob> {
+  const res = await fetch(`/api/bookmarks/detect-shortcuts/${jobId}`);
+  if (!res.ok) throw new Error(`Failed to load detection job: ${res.status}`);
+  return detectShortcutsJobSchema.parse(await res.json());
+}
+
+async function clearShortcutCache(): Promise<number> {
+  const res = await fetch("/api/bookmarks/clear-shortcut-cache", { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to clear shortcut cache: ${res.status}`);
+  return clearShortcutCacheResponseSchema.parse(await res.json()).cleared;
 }
 
 async function confirmShortcuts(ids: number[]): Promise<void> {
@@ -152,8 +166,21 @@ export function useDeleteBookmark() {
   });
 }
 
-export function useDetectShortcuts() {
-  return useMutation({ mutationFn: detectShortcuts });
+export function useStartDetectShortcuts() {
+  return useMutation({ mutationFn: startDetectShortcuts });
+}
+
+export function useDetectShortcutsJob(jobId: number | null) {
+  return useQuery({
+    queryKey: ["detectShortcutsJob", jobId],
+    queryFn: () => fetchDetectShortcutsJob(jobId!),
+    enabled: jobId !== null,
+    refetchInterval: (query) => (query.state.data?.status === "running" ? 2000 : false),
+  });
+}
+
+export function useClearShortcutCache() {
+  return useMutation({ mutationFn: clearShortcutCache });
 }
 
 export function useConfirmShortcuts() {
