@@ -4,11 +4,17 @@
 FROM node:24-slim AS build
 WORKDIR /app
 
+# Overridable so a build on a host with poor/blocked access to the default registry (e.g. some
+# mainland China networks and registry.npmjs.org) can point at a faster mirror — set NPM_REGISTRY
+# in .env and pass it through docker-compose's build.args. Defaults to npm's own registry, so
+# this changes nothing unless explicitly overridden.
+ARG NPM_REGISTRY=https://registry.npmjs.org
+
 COPY package.json ./
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/server/package.json packages/server/package.json
 COPY packages/web/package.json packages/web/package.json
-RUN npm install
+RUN npm install --registry="${NPM_REGISTRY}"
 
 COPY tsconfig.base.json ./
 COPY packages/shared packages/shared

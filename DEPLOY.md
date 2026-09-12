@@ -55,6 +55,7 @@ clever layering trick.
    | `POSTGRES_DB`        | anything                                                              |
    | `DEEPSEEK_API_KEY`   | required for tagging, auto-fill, auto-categorize, category planning — the app runs without it, but every AI-backed feature will error |
    | `APP_PORT`           | which port on `127.0.0.1` the app listens on for nginx to proxy to — defaults to `3001`; change it if that's already taken by something else on this VPS |
+   | `NPM_REGISTRY`       | optional — only needed if the build's `npm install` step is slow or hangs (common on mainland China networks reaching `registry.npmjs.org`). Set to `https://registry.npmmirror.com` (Alibaba's own mirror, fast from an Aliyun VPS) or another mirror. |
 
    `POSTGRES_PORT` and `PORT` from `.env.example` aren't used by the prod stack — safe to
    leave them or delete them.

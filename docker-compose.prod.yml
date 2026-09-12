@@ -35,6 +35,10 @@ services:
     build:
       context: .
       dockerfile: packages/server/Dockerfile
+      args:
+        # Set NPM_REGISTRY in .env if the default registry is slow/unreachable from this host
+        # (e.g. registry.npmmirror.com on a mainland China VPS) — see the Dockerfile comment.
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
     restart: unless-stopped
     depends_on:
       db:
