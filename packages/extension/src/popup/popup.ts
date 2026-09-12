@@ -31,6 +31,7 @@ const summaryInput = document.getElementById("summary") as HTMLTextAreaElement;
 const autoTagBtn = document.getElementById("autoTag") as HTMLButtonElement;
 const saveBtn = document.getElementById("save") as HTMLButtonElement;
 const optionsLink = document.getElementById("options")!;
+const manageBtn = document.getElementById("manage") as HTMLButtonElement;
 const status = document.getElementById("status")!;
 
 const tabSaveBtn = document.getElementById("tabSave") as HTMLButtonElement;
@@ -193,6 +194,15 @@ faviconImg.addEventListener("error", () => faviconImg.classList.remove("visible"
 optionsLink.addEventListener("click", (e) => {
   e.preventDefault();
   browser.runtime.openOptionsPage();
+});
+
+manageBtn.addEventListener("click", async () => {
+  const result = (await browser.runtime.sendMessage({ type: "OPEN_MANAGE_PAGE" })) as Result<void> | undefined;
+  if (!result?.ok) {
+    setStatus(result?.error ?? "Couldn't open the manage page.", "error");
+    return;
+  }
+  window.close();
 });
 
 function makeChip(text: string, kind: "tag" | "category" | "project"): HTMLSpanElement {

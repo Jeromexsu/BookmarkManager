@@ -78,13 +78,16 @@
         margin-top: 1px;
       }
 
-      #options {
+      .header-links { display: flex; align-items: center; gap: 10px; }
+      .header-link {
+        all: unset;
+        cursor: pointer;
         font-size: 11.5px;
         color: var(--muted);
         text-decoration: none;
         transition: color 0.15s ease;
       }
-      #options:hover { color: var(--accent); }
+      .header-link:hover { color: var(--accent); }
 
       .tabs {
         display: flex;
@@ -424,7 +427,10 @@
         <h1>🔖 Bookmark Manager</h1>
         <span id="buildTime"></span>
       </div>
-      <a href="#" id="options">Settings</a>
+      <div class="header-links">
+        <button type="button" id="manage" class="header-link">Manage</button>
+        <a href="#" id="options" class="header-link">Settings</a>
+      </div>
     </header>
 
     <div class="tabs">

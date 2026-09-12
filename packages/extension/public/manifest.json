@@ -9,7 +9,7 @@
       "strict_min_version": "115.0"
     }
   },
-  "permissions": ["activeTab", "scripting", "storage", "bookmarks"],
+  "permissions": ["activeTab", "scripting", "storage", "bookmarks", "tabs"],
   "background": {
     "scripts": ["background.js"],
     "type": "module"

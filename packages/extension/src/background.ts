@@ -133,6 +133,30 @@ async function saveBookmark(payload: BookmarkPayload): Promise<SaveOutcome> {
   return { status: "saved" };
 }
 
+// The server already serves the built web management app at its own root (same origin as the
+// API — see packages/server/src/index.ts) — no separate frontend to run or deploy. "Wake up"
+// means: if a tab with that page is already open, focus it instead of piling on a duplicate.
+async function openManagePage(): Promise<Result<void>> {
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    return { ok: false, error: "Set your server URL in the extension settings first." };
+  }
+  const manageUrl = `${serverUrl.replace(/\/$/, "")}/`;
+
+  const tabs = await browser.tabs.query({});
+  const existing = tabs.find((tab) => tab.url && `${tab.url.replace(/\/$/, "")}/` === manageUrl);
+
+  if (existing?.id !== undefined) {
+    await browser.tabs.update(existing.id, { active: true });
+    if (existing.windowId !== undefined) {
+      await browser.windows.update(existing.windowId, { focused: true });
+    }
+  } else {
+    await browser.tabs.create({ url: manageUrl });
+  }
+  return { ok: true, data: undefined };
+}
+
 // Applies the user's per-field choice after a save conflict — "use new" fields only, since
 // "keep existing" needs no request at all.
 async function resolveConflict(bookmarkId: number, patch: Record<string, string | string[]>): Promise<Result<void>> {
@@ -159,7 +183,8 @@ type IncomingMessage =
   | { type: "LIST_PROJECTS" }
   | { type: "LIST_BOOKMARKS" }
   | { type: "SAVE_BOOKMARK"; payload: BookmarkPayload }
-  | { type: "RESOLVE_CONFLICT"; payload: { bookmarkId: number; patch: Record<string, string | string[]> } };
+  | { type: "RESOLVE_CONFLICT"; payload: { bookmarkId: number; patch: Record<string, string | string[]> } }
+  | { type: "OPEN_MANAGE_PAGE" };
 
 browser.runtime.onMessage.addListener((raw: unknown) => {
   const message = raw as IncomingMessage;
@@ -170,4 +195,5 @@ browser.runtime.onMessage.addListener((raw: unknown) => {
   if (message?.type === "LIST_BOOKMARKS") return listBookmarks();
   if (message?.type === "SAVE_BOOKMARK") return saveBookmark(message.payload);
   if (message?.type === "RESOLVE_CONFLICT") return resolveConflict(message.payload.bookmarkId, message.payload.patch);
+  if (message?.type === "OPEN_MANAGE_PAGE") return openManagePage();
 });
