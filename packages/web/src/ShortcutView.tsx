@@ -19,15 +19,16 @@ type SubView = "category" | "all";
 interface ShortcutViewProps {
   shortcuts: Bookmark[];
   categories: string[];
+  // Driven by the top-level omnisearch bar (App.tsx) now, not a search box owned by this view.
+  query: string;
 }
 
-export function ShortcutView({ shortcuts, categories }: ShortcutViewProps) {
+export function ShortcutView({ shortcuts, categories, query }: ShortcutViewProps) {
   const startMutation = useStartDetectShortcuts();
   const confirmMutation = useConfirmShortcuts();
   const clearCacheMutation = useClearShortcutCache();
 
   const [subView, setSubView] = useState<SubView>("category");
-  const [query, setQuery] = useState("");
   const [jobId, setJobId] = useState<number | null>(readStoredJobId);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -98,16 +99,11 @@ export function ShortcutView({ shortcuts, categories }: ShortcutViewProps) {
   }
 
   const candidates = jobQuery.data?.status === "completed" ? jobQuery.data.candidates : null;
+  const isSearching = query.trim() !== "";
 
   return (
     <div className="flex-1 min-w-0 p-4 overflow-y-auto">
-      <div className="flex items-center gap-2 mb-3">
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search shortcuts…"
-          className="flex-1 px-3 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-sm outline-none focus:border-blue-500"
-        />
+      <div className="flex items-center justify-end gap-2 mb-3">
         <button
           onClick={() => clearCacheMutation.mutate()}
           disabled={clearCacheMutation.isPending}
@@ -223,7 +219,10 @@ export function ShortcutView({ shortcuts, categories }: ShortcutViewProps) {
         <p className="text-sm text-neutral-400 text-center py-12">
           No shortcuts yet — click "Detect shortcuts" to find candidates among your bookmarks.
         </p>
-      ) : subView === "all" ? (
+      ) : /* Search results are a flat, unified grid — the category tree adds nothing once every
+             tile already shows its own category dot, so bypass it while a query is active
+             regardless of which sub-tab is selected. */
+      isSearching || subView === "all" ? (
         <div className="flex flex-wrap gap-3">
           {filtered.map((s) => (
             <ShortcutTile key={s.id} bookmark={s} />

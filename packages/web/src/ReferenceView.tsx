@@ -7,13 +7,14 @@ import { CategorySuggestions } from "./CategorySuggestions";
 interface ReferenceViewProps {
   bookmarks: Bookmark[];
   categories: string[];
+  // Driven by the top-level omnisearch bar (App.tsx) now, not a search box owned by this view.
+  query: string;
 }
 
 type SubView = "category" | "all";
 
-export function ReferenceView({ bookmarks, categories }: ReferenceViewProps) {
+export function ReferenceView({ bookmarks, categories, query }: ReferenceViewProps) {
   const [subView, setSubView] = useState<SubView>("category");
-  const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -28,16 +29,10 @@ export function ReferenceView({ bookmarks, categories }: ReferenceViewProps) {
   // Suggestions come back scoped to ALL uncategorized bookmarks server-side, not just the
   // current search results, so the title lookup needs the full unfiltered set too.
   const bookmarkTitleById = useMemo(() => new Map(bookmarks.map((b) => [b.id, b.title])), [bookmarks]);
+  const isSearching = query.trim() !== "";
 
   return (
     <div className="flex-1 min-w-0 p-4 overflow-y-auto">
-      <input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search references…"
-        className="w-full mb-3 px-3 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-sm outline-none focus:border-blue-500"
-      />
-
       <nav className="flex gap-1 bg-neutral-100 dark:bg-neutral-800 rounded-lg p-1 mb-3 w-fit">
         {(["category", "all"] as const).map((v) => (
           <button
@@ -56,10 +51,13 @@ export function ReferenceView({ bookmarks, categories }: ReferenceViewProps) {
 
       {subView === "category" && <CategorySuggestions bookmarkTitleById={bookmarkTitleById} />}
 
-      {subView === "all" ? (
+      {/* Search results are a flat, unified list — the category tree adds nothing once every
+          card already shows its own category pill, so bypass it while a query is active
+          regardless of which sub-tab is selected. */}
+      {isSearching || subView === "all" ? (
         <BookmarkList bookmarks={filtered} />
       ) : (
-        <GroupedCardView bookmarks={filtered} autoExpand={query.trim() !== ""} categories={categories} />
+        <GroupedCardView bookmarks={filtered} categories={categories} />
       )}
     </div>
   );

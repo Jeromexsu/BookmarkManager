@@ -7,6 +7,8 @@ interface ProjectsViewProps {
   // Resolved bookmarks of either type — a project is a container that collects references
   // and shortcuts together, not a reference-only attribute.
   bookmarks: Bookmark[];
+  // Driven by the top-level omnisearch bar (App.tsx) now, not a search box owned by this view.
+  query: string;
 }
 
 function buildGroups(bookmarks: Bookmark[]): Map<string, Bookmark[]> {
@@ -20,8 +22,7 @@ function buildGroups(bookmarks: Bookmark[]): Map<string, Bookmark[]> {
   return groups;
 }
 
-export function ProjectsView({ bookmarks }: ProjectsViewProps) {
-  const [query, setQuery] = useState("");
+export function ProjectsView({ bookmarks, query }: ProjectsViewProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const filtered = useMemo(() => {
@@ -36,7 +37,7 @@ export function ProjectsView({ bookmarks }: ProjectsViewProps) {
 
   const groups = buildGroups(filtered);
   const sortedKeys = [...groups.keys()].sort((a, b) => a.localeCompare(b));
-  const autoExpand = query.trim() !== "";
+  const isSearching = query.trim() !== "";
 
   function toggle(key: string) {
     setExpanded((prev) => {
@@ -47,24 +48,47 @@ export function ProjectsView({ bookmarks }: ProjectsViewProps) {
     });
   }
 
+  // Search results are a flat, unified list — the project tree adds nothing once every card
+  // already shows its own project pill, so bypass it entirely while a query is active.
+  const filteredReferences = filtered.filter((b) => b.type === "reference");
+  const filteredShortcuts = filtered.filter((b) => b.type === "shortcut");
+
   return (
     <div className="flex-1 min-w-0 p-4 overflow-y-auto">
-      <input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search projects…"
-        className="w-full mb-3 px-3 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-sm outline-none focus:border-blue-500"
-      />
-
-      {sortedKeys.length === 0 ? (
-        <p className="text-sm text-neutral-400 text-center py-12">
-          {bookmarks.length === 0 ? "No bookmarks have a project yet." : "No projects match."}
-        </p>
+      {isSearching ? (
+        filtered.length === 0 ? (
+          <p className="text-sm text-neutral-400 text-center py-12">No bookmarks match.</p>
+        ) : (
+          <div className="space-y-4">
+            {filteredReferences.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">References</p>
+                <ul className="space-y-2">
+                  {filteredReferences.map((b) => (
+                    <BookmarkRow key={b.id} bookmark={b} />
+                  ))}
+                </ul>
+              </div>
+            )}
+            {filteredShortcuts.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">Shortcuts</p>
+                <div className="flex flex-wrap gap-3">
+                  {filteredShortcuts.map((s) => (
+                    <ShortcutTile key={s.id} bookmark={s} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      ) : sortedKeys.length === 0 ? (
+        <p className="text-sm text-neutral-400 text-center py-12">No bookmarks have a project yet.</p>
       ) : (
         <div className="space-y-1">
           {sortedKeys.map((key) => {
             const items = groups.get(key)!;
-            const isOpen = autoExpand || expanded.has(key);
+            const isOpen = expanded.has(key);
             const references = items.filter((b) => b.type === "reference");
             const shortcuts = items.filter((b) => b.type === "shortcut");
 

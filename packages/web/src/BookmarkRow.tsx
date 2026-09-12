@@ -143,21 +143,22 @@ export function BookmarkRow({ bookmark, showResolveActions = false, moveToCatego
               </button>
             )}
             {showResolveActions && (
-              <>
-                <button
-                  onClick={handleMarkResolved}
-                  className="text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 text-xs font-medium whitespace-nowrap"
-                >
-                  ✓ Mark resolved
-                </button>
-                <button
-                  onClick={handleMarkAsShortcut}
-                  className="text-violet-600 dark:text-violet-400 hover:text-violet-700 text-xs font-medium whitespace-nowrap"
-                >
-                  📦 It's a shortcut
-                </button>
-              </>
+              <button
+                onClick={handleMarkResolved}
+                className="text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 text-xs font-medium whitespace-nowrap"
+              >
+                ✓ Mark resolved
+              </button>
             )}
+            {/* BookmarkRow only ever renders type="reference" bookmarks (shortcuts use
+                ShortcutTile) — this is the reference->shortcut half of the conversion; the
+                other direction lives on ShortcutTile's "Not a shortcut" button. */}
+            <button
+              onClick={handleMarkAsShortcut}
+              className="text-violet-600 dark:text-violet-400 hover:text-violet-700 text-xs font-medium whitespace-nowrap"
+            >
+              📦 It's a shortcut
+            </button>
             <button onClick={handleDelete} className="text-neutral-400 hover:text-red-600 text-xs">
               Delete
             </button>

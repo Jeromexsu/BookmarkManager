@@ -1,14 +1,14 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { Bookmark } from "@bookmark-manager/shared";
 import { BookmarkRow } from "./BookmarkRow";
 
 interface PendingViewProps {
   pending: Bookmark[];
+  // Driven by the top-level omnisearch bar (App.tsx) now, not a search box owned by this view.
+  query: string;
 }
 
-export function PendingView({ pending }: PendingViewProps) {
-  const [query, setQuery] = useState("");
-
+export function PendingView({ pending, query }: PendingViewProps) {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return pending;
@@ -22,13 +22,6 @@ export function PendingView({ pending }: PendingViewProps) {
         tags, and summary are still unknown. Add tags/category by hand, mark it as a shortcut if it's just an
         entrance page, or mark it resolved as-is if it doesn't need any of that.
       </p>
-
-      <input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search pending…"
-        className="w-full mb-4 px-3 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-sm outline-none focus:border-blue-500"
-      />
 
       {filtered.length === 0 ? (
         <p className="text-sm text-neutral-400 text-center py-12">
